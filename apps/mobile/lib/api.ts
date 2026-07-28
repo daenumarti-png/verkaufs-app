@@ -1,6 +1,13 @@
 import { Platform } from "react-native";
 import type { ImagePickerAsset } from "expo-image-picker";
-import type { AnalyzeItemsResponse, ApiError, RefineEstimateRequest, RefineEstimateResponse } from "@verkaufs-app/shared";
+import type {
+  AnalyzeItemsResponse,
+  ApiError,
+  RefineEstimateRequest,
+  RefineEstimateResponse,
+  PrepareListingsRequest,
+  PrepareListingsResponse,
+} from "@verkaufs-app/shared";
 import { getOrCreateGuestDeviceId } from "./guest-device-id";
 import { getItem } from "./storage";
 
@@ -63,6 +70,20 @@ export async function analyzeItems(photos: ImagePickerAsset[]): Promise<AnalyzeI
     throw new ApiRequestError(res.status, body);
   }
   return body as AnalyzeItemsResponse;
+}
+
+export async function prepareListings(input: PrepareListingsRequest): Promise<PrepareListingsResponse> {
+  const res = await fetch(`${API_BASE_URL}/items/prepare-listings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as PrepareListingsResponse;
 }
 
 export async function refineEstimate(input: RefineEstimateRequest): Promise<RefineEstimateResponse> {

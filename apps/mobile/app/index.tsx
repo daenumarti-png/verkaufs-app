@@ -6,6 +6,7 @@ import { router, useFocusEffect } from "expo-router";
 import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser } from "@verkaufs-app/shared";
 import { analyzeItems, refineEstimate, ApiRequestError } from "../lib/api";
 import { getStoredUser, signOut } from "../lib/auth";
+import { setExportItem } from "../lib/export-store";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor } from "../constants/theme";
 
 const MAX_PHOTOS = 6;
@@ -87,6 +88,20 @@ export default function HomeScreen() {
     setAnsweredChips({});
     setRefinementNotes({});
     analyzeMutation.reset();
+  };
+
+  const handleExport = (item: AnalyzedItem) => {
+    setExportItem({
+      name: item.name,
+      category: item.category,
+      condition_guess: item.condition_guess,
+      suggested_title: item.suggested_title,
+      suggested_description: item.suggested_description,
+      estimated_price_chf_min: item.estimated_price_chf_min,
+      estimated_price_chf_max: item.estimated_price_chf_max,
+      best_selling_period: item.best_selling_period.period,
+    });
+    router.push("/export");
   };
 
   const handleAnswerChip = async (itemIndex: number, question: string, option: string) => {
@@ -236,6 +251,7 @@ export default function HomeScreen() {
               itemIndex={index}
               refinementNote={refinementNotes[index]}
               onAnswerChip={handleAnswerChip}
+              onExport={handleExport}
             />
           ))}
 
@@ -258,6 +274,7 @@ function ItemCard({
   answeredChips,
   refinementNote,
   onAnswerChip,
+  onExport,
 }: {
   item: AnalyzedItem;
   itemIndex: number;
@@ -265,6 +282,7 @@ function ItemCard({
   answeredChips: Record<string, string>;
   refinementNote?: string;
   onAnswerChip: (itemIndex: number, question: string, option: string) => void;
+  onExport: (item: AnalyzedItem) => void;
 }) {
   return (
     <View style={styles.itemCard}>
@@ -330,6 +348,10 @@ function ItemCard({
           {refinementNote && <Text style={styles.refinementNote}>{refinementNote}</Text>}
         </View>
       )}
+
+      <Pressable onPress={() => onExport(item)} style={styles.exportButton}>
+        <Text style={styles.exportButtonText}>Für Tutti / Ricardo / eBay exportieren</Text>
+      </Pressable>
     </View>
   );
 }
@@ -443,6 +465,15 @@ const styles = StyleSheet.create({
   chipText: { color: TEXT, fontSize: 12.5 },
   chipTextSelected: { color: BG, fontWeight: "700" },
   refinementNote: { color: TEAL, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  exportButton: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: ACCENT,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  exportButtonText: { color: ACCENT, fontSize: 13, fontWeight: "700" },
   finalDisclaimer: { color: MUTED, fontSize: 11, textAlign: "center", marginTop: 4, marginBottom: 14, lineHeight: 16 },
   resetButton: { alignItems: "center", paddingVertical: 11 },
   resetButtonText: { color: MUTED, fontSize: 13 },
