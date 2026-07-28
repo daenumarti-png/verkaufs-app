@@ -1,0 +1,172 @@
+// Datenbank-Schema – Grundgerüst aus Phase 1 (Nutzer/Artikel/Verkaufshistorie),
+// SaleHistory in Phase 3 crowdsourcing-tauglich gemacht (siehe Kommentar dort).
+// Rückfragen/Sammlerwert-Felder folgen in Phase 5/7 – hier bewusst noch nicht vorweggenommen.
+//
+// Datenschutz/Löschfristen (Phase 13, Schweizer DSG, Briefing Abschnitt 8):
+// - User + zugehörige Items/Photos/EbayConnection: aufbewahrt, bis der Nutzer
+//   sein Konto selbst löscht (DELETE /account, kaskadiert per onDelete: Cascade).
+// - SaleHistory: bleibt bewusst auch nach Item-Löschung bestehen (onDelete:
+//   SetNull, siehe Modell-Kommentar) UND wird bei Account-Löschung aktuell
+//   mitgelöscht (onDelete: Cascade auf userId) – vollständige Löschung statt
+//   Anonymisierung ist die konservativere, klar DSG-konforme Grundeinstellung.
+//   Falls die Crowdsourcing-Datendichte das später problematisch macht, wäre
+//   ein Wechsel zu "userId auf null setzen, Verkaufsdaten anonymisiert
+//   behalten" eine bewusste Produkt-/Rechtsentscheidung, keine stille Änderung.
+// - GuestUsage: keine personenbezogenen Daten (nur anonyme Geräte-ID + Zähler),
+//   daher unkritisch; ein zeitbasiertes Aufräumen alter Einträge ist ein
+//   sinnvoller, aber noch nicht gebauter Cron-Job (siehe Hinweis unten).
+// - Automatisches, zeitbasiertes Löschen (z.B. "Entwürfe nach 90 Tagen
+//   löschen") ist noch NICHT implementiert – bräuchte einen Scheduler
+//   (Cron), der erst beim echten Deployment sinnvoll aufgesetzt werden kann.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+  GOOGLE
+  APPLE
+}
+
+enum ItemStatus {
+  DRAFT // frisch analysiert, noch nicht veröffentlicht
+  LISTED // vom Nutzer als "inseriert" markiert (Tutti/Ricardo: manuell, eBay: ggf. via API)
+  SOLD
+  ARCHIVED
+}
+
+enum Platform {
+  TUTTI
+  RICARDO
+  EBAY
+  OTHER
+}
+
+// Nur registrierte Nutzer (Google/Apple-Login) landen hier.
+// Gastnutzung (siehe Briefing Abschnitt 6) läuft ohne Account und wird
+// clientseitig/lokal gehalten, nicht in dieser Tabelle.
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  name           String?
+  authProvider   AuthProvider
+  authProviderId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  items          Item[]
+  saleHistory    SaleHistory[]
+  ebayConnection EbayConnection?
+
+  @@unique([authProvider, authProviderId])
+}
+
+// Ein analysierter Artikel (Entwurf bis hin zu verkauft).
+// Feldnamen orientieren sich bewusst an der Analyse-Antwort aus dem
+// Prototyp (siehe packages/shared/src/schemas/item-analysis.ts), damit
+// Phase 2 (Foto-Analyse-Backend) die Ergebnisse ohne Mapping-Bruch speichern kann.
+model Item {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name                 String
+  category             String
+  conditionGuess       String?
+  suggestedTitle       String
+  suggestedDescription String?
+
+  estimatedPriceChfMin Int
+  estimatedPriceChfMax Int
+  sellScore            Int // 1–10, siehe Analyse-Schema
+  estimatedDaysToSell  Int?
+
+  missingPhotoSuggestions String[]
+
+  status ItemStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  photos Photo[]
+  sale   SaleHistory?
+
+  @@index([userId])
+}
+
+// Reale, unbearbeitete Nutzerfotos zu einem Artikel.
+// Bleiben laut Anweisungen immer zusätzlich zum generierten Titelfoto sichtbar (Phase 8).
+model Photo {
+  id              String   @id @default(uuid())
+  itemId          String
+  item            Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  storageUrl      String
+  isGeneratedHero Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([itemId])
+}
+
+// Bestätigter Verkauf – Grundlage für die eigene Preisdatenbank
+// (Briefing Abschnitt 4, Strategie-Stufe 2 "eigene Verkaufshistorie";
+// Stufe 3 "Crowdsourcing": je mehr Nutzer bestätigte Verkäufe eintragen,
+// desto genauer die Schätzung für zukünftige Artikel derselben Kategorie).
+//
+// category/itemName/conditionGuess sind bewusst als Snapshot zum
+// Verkaufszeitpunkt denormalisiert (nicht nur über item-Relation gelesen):
+// Die Preis-Historie muss unabhängig vom späteren Schicksal des Item-Entwurfs
+// (Bearbeitung, Löschung) bestehen bleiben, da sie als Crowdsourcing-Datenbasis
+// für ALLE Nutzer dient, nicht nur für den ursprünglichen Verkäufer.
+model SaleHistory {
+  id     String  @id @default(uuid())
+  itemId String? @unique
+  item   Item?   @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  userId String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category       String
+  itemName       String
+  conditionGuess String?
+
+  finalPriceChf Int
+  daysToSell    Int
+  platform      Platform?
+  soldAt        DateTime  @default(now())
+
+  @@index([userId])
+  @@index([category])
+}
+
+// Phase 10 – Gastmodus mit 5-Artikel-Limit (Briefing Abschnitt 1/6). Bewusst
+// KEINE Nutzertabelle: nur ein anonymer Zähler pro clientseitig erzeugter
+// Geräte-ID, damit das Limit serverseitig durchgesetzt werden kann (rein
+// client-seitiges Zählen wäre durch Neuinstallation trivial umgehbar).
+// Enthält keine personenbezogenen Daten.
+model GuestUsage {
+  deviceId      String   @id
+  itemsAnalyzed Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Phase 12 – eBay-Kontoverknüpfung pro Nutzer (Drei-Wege-OAuth). Der
+// Refresh-Token ist ein hochsensibles Credential (erlaubt dauerhaften API-
+// Zugriff auf das eBay-Verkäuferkonto) und wird NIE im Klartext gespeichert
+// (siehe lib/crypto.ts) – Sicherheits-Checkliste Briefing Abschnitt 8.
+model EbayConnection {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  encryptedRefreshToken String
+  refreshTokenExpiresAt DateTime
+  scopes                String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

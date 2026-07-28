@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.expo/
+.expo-shared/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Env / Secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Prisma
+apps/backend/prisma/dev.db
+apps/backend/prisma/migrations/dev/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Expo / React Native
+ios/
+android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/

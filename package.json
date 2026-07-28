@@ -1,0 +1,27 @@
+{
+  "name": "verkaufs-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "KI-Verkaufsassistent für Occasion-Artikel (Schweiz)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "dev:mobile": "npm run start --workspace=apps/mobile",
+    "build:shared": "npm run build --workspace=packages/shared"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "allowScripts": {
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true,
+    "esbuild@0.28.1": true,
+    "prisma@5.22.0": true,
+    "sharp@0.33.5": true,
+    "sharp@0.32.6": true,
+    "onnxruntime-node@1.17.3": true
+  }
+}

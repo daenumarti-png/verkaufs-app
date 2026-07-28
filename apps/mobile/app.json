@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Verkaufs-Assistent",
+    "slug": "verkaufs-assistent",
+    "scheme": "verkaufsassistent",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ch.verkaufsassistent.app"
+    },
+    "android": {
+      "package": "ch.verkaufsassistent.app"
+    }
+  }
+}
