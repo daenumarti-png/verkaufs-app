@@ -7,6 +7,9 @@ import { removeBackground } from "@imgly/background-removal-node";
 // aus dem besten Nutzerfoto isolieren, vor einen neutralen Studio-Hintergrund
 // setzen, dezenter Bodenschatten für Räumlichkeit. Kein generatives Risiko –
 // der Artikel selbst bleibt das unveränderte Originalfoto, nur freigestellt.
+// Optional (composeMarketingHeroImage) wird zusätzlich Titel/Preis/Zustand
+// als Text-Overlay ergänzt (Nutzerfeedback: das rein generative Stimmungsbild
+// wurde durch diese Variante ersetzt, da das reale Foto erkennbar bleiben muss).
 //
 // Hinweis: removeBackground lädt beim ersten Aufruf ein ONNX-Segmentierungsmodell
 // nach (~Netzwerkzugriff, danach lokal gecacht) – erster Call ist deshalb spürbar
@@ -25,6 +28,13 @@ const RESOURCES_PUBLIC_PATH = `file://${packageDistDir.replace(/\\/g, "/")}/`;
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 1200;
 const PADDING_RATIO = 0.12;
+const BANNER_HEIGHT = 230;
+
+export interface MarketingFacts {
+  title: string;
+  priceChf: number;
+  conditionGuess?: string;
+}
 
 function buildBackgroundSvg(width: number, height: number): string {
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -50,7 +60,45 @@ function buildShadowSvg(width: number, height: number): string {
   </svg>`;
 }
 
-export async function composeHeroImage(sourcePhotoBuffer: Buffer): Promise<Buffer> {
+function escapeSvgText(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function truncateForBanner(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+// Halbtransparenter Verlaufsbalken am unteren Bildrand mit Titel/Preis/
+// Zustand als Text – bewusst KEIN Ersatz für das Foto, sondern eine Ergänzung
+// darauf. Zeichenlimits sind grobe Schätzwerte für die gewählte Schriftgrösse/
+// -breite, keine exakte Textmessung (dafür bräuchte es eine Canvas-Bibliothek).
+function buildFactsBannerSvg(width: number, height: number, facts: MarketingFacts): string {
+  const title = escapeSvgText(truncateForBanner(facts.title, 40));
+  const price = escapeSvgText(`ab CHF ${Math.round(facts.priceChf)}`);
+  const condition = facts.conditionGuess ? escapeSvgText(truncateForBanner(facts.conditionGuess, 26)) : null;
+
+  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="banner" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+        <stop offset="40%" stop-color="#000000" stop-opacity="0.7"/>
+        <stop offset="100%" stop-color="#000000" stop-opacity="0.82"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#banner)"/>
+    <text x="48" y="${height - 140}" font-family="Arial, sans-serif" font-size="44" font-weight="700" fill="#F5F1E8">${title}</text>
+    <text x="48" y="${height - 66}" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#D4A017">${price}</text>
+    ${condition ? `<text x="${width - 48}" y="${height - 66}" font-family="Arial, sans-serif" font-size="30" font-weight="600" fill="#F5F1E8" text-anchor="end">${condition}</text>` : ""}
+  </svg>`;
+}
+
+async function buildComposedOverlays(sourcePhotoBuffer: Buffer): Promise<sharp.OverlayOptions[]> {
   // Bewusst ein Blob mit explizitem MIME-Type statt des rohen Buffers: Die
   // Bibliothek wrapt einen rohen Buffer intern selbst in ein Blob, aber ohne
   // "type" zu setzen, was ihre eigene Formaterkennung mit "Unsupported
@@ -92,11 +140,26 @@ export async function composeHeroImage(sourcePhotoBuffer: Buffer): Promise<Buffe
   const shadowLeft = Math.round((CANVAS_WIDTH - shadowWidth) / 2);
   const shadowTop = itemTop + finalItemHeight - Math.round(shadowHeight * 0.5);
 
+  return [
+    { input: Buffer.from(buildShadowSvg(shadowWidth, shadowHeight)), left: shadowLeft, top: shadowTop },
+    { input: resizedItem, left: itemLeft, top: itemTop },
+  ];
+}
+
+export async function composeHeroImage(sourcePhotoBuffer: Buffer): Promise<Buffer> {
+  const overlays = await buildComposedOverlays(sourcePhotoBuffer);
   return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))
-    .composite([
-      { input: Buffer.from(buildShadowSvg(shadowWidth, shadowHeight)), left: shadowLeft, top: shadowTop },
-      { input: resizedItem, left: itemLeft, top: itemTop },
-    ])
+    .composite(overlays)
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
+export async function composeMarketingHeroImage(sourcePhotoBuffer: Buffer, facts: MarketingFacts): Promise<Buffer> {
+  const overlays = await buildComposedOverlays(sourcePhotoBuffer);
+  const banner = Buffer.from(buildFactsBannerSvg(CANVAS_WIDTH, BANNER_HEIGHT, facts));
+
+  return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))
+    .composite([...overlays, { input: banner, left: 0, top: CANVAS_HEIGHT - BANNER_HEIGHT }])
     .jpeg({ quality: 90 })
     .toBuffer();
 }

@@ -9,12 +9,6 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),
-  // Erst ab Phase 8 (generatives Stimmungsbild) nötig; gleiche
-  // "leer = nicht gesetzt"-Behandlung wie beim Anthropic-Key.
-  OPENAI_API_KEY: z
-    .string()
-    .optional()
-    .transform((v) => (v && v.length > 0 ? v : undefined)),
   // Phase 10 – Auth. GOOGLE_CLIENT_ID/APPLE_CLIENT_ID sind die erwarteten
   // "aud"-Werte in den jeweiligen Provider-Tokens; ohne gesetzten Wert lehnt
   // die jeweilige Verifikation ALLE Tokens ab (fail-closed, nicht offen).

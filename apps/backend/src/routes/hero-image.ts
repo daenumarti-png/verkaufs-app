@@ -1,11 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import type { ApiError, HeroImageComposingResult, HeroImageGenerativeResult } from "@verkaufs-app/shared";
-import { generateMoodImageRequestSchema } from "@verkaufs-app/shared";
-import { env } from "../config/env.js";
+import type { ApiError, HeroImageComposingResult } from "@verkaufs-app/shared";
+import { composeMarketingHeroImageFieldsSchema } from "@verkaufs-app/shared";
 import { processPhotos } from "../services/photo-processing.js";
-import { composeHeroImage } from "../services/hero-image-composing.js";
-import { generateMoodImageBase64, MOOD_IMAGE_DISCLAIMER } from "../services/hero-image-generative.js";
-import { EXPENSIVE_ENDPOINT_RATE_LIMIT } from "../config/rate-limit.js";
+import { composeHeroImage, composeMarketingHeroImage } from "../services/hero-image-composing.js";
 
 function errorReply(error: string, message: string): ApiError {
   return { error, message };
@@ -63,46 +60,72 @@ export async function heroImageRoutes(app: FastifyInstance) {
     }
   });
 
-  // Generativer Ansatz (Phase 8, Ansatz 2): nur auf explizite Anfrage, da
-  // Bildgenerierung spürbar mehr kostet als Text/Vision-Calls (siehe
-  // Abstimmung mit Nutzer). Erzeugt bewusst nur Atmosphäre/Umgebung, nicht
-  // den Artikel selbst.
-  app.post(
-    "/items/hero-image/generative",
-    { config: { rateLimit: EXPENSIVE_ENDPOINT_RATE_LIMIT } },
-    async (req, reply) => {
-      if (!env.OPENAI_API_KEY) {
-        return reply
-          .status(503)
-          .send(
-            errorReply(
-              "service_unavailable",
-              "Generative Stimmungsbilder sind aktuell nicht konfiguriert (kein OpenAI-API-Key hinterlegt)."
-            )
-          );
-      }
-
-      const parsedBody = generateMoodImageRequestSchema.safeParse(req.body);
-      if (!parsedBody.success) {
-        return reply
-          .status(400)
-          .send(errorReply("invalid_request", "Anfrage-Body entspricht nicht dem erwarteten Schema."));
-      }
-
-      try {
-        const imageBase64 = await generateMoodImageBase64(parsedBody.data, env.OPENAI_API_KEY);
-        const result: HeroImageGenerativeResult = {
-          image_base64: imageBase64,
-          media_type: "image/png",
-          disclaimer: MOOD_IMAGE_DISCLAIMER,
-        };
-        return reply.status(200).send(result);
-      } catch (err) {
-        req.log.error(err, "Generatives Stimmungsbild fehlgeschlagen");
-        return reply
-          .status(502)
-          .send(errorReply("hero_image_failed", "Stimmungsbild konnte nicht erstellt werden. Bitte nochmals versuchen."));
-      }
+  // Marketing-Titelbild (Phase 8, Ansatz 2 – ersetzt das frühere rein
+  // generative Stimmungsbild nach Nutzerfeedback: das reale Foto muss
+  // erkennbar bleiben). Nimmt denselben Composing-Freisteller wie oben und
+  // ergänzt Titel/Preis/Zustand als Text-Overlay statt eines KI-generierten
+  // Bildes.
+  app.post("/items/hero-image/marketing", async (req, reply) => {
+    let parts;
+    try {
+      parts = req.parts();
+    } catch (err) {
+      req.log.warn(err, "Multipart-Request konnte nicht gelesen werden");
+      return reply
+        .status(400)
+        .send(errorReply("invalid_upload", "Upload konnte nicht gelesen werden (multipart/form-data erwartet)."));
     }
-  );
+
+    let file: { filename: string; buffer: Buffer } | null = null;
+    const rawFields: Record<string, string> = {};
+    for await (const part of parts) {
+      if (part.type === "file") {
+        if (file) {
+          part.file.resume(); // nur das erste Foto wird verwendet
+          continue;
+        }
+        file = { filename: part.filename || "foto.jpg", buffer: await part.toBuffer() };
+        continue;
+      }
+      rawFields[part.fieldname] = String(part.value);
+    }
+
+    if (!file) {
+      return reply.status(400).send(errorReply("no_photo", "Ein Foto wird benötigt."));
+    }
+
+    const parsedFields = composeMarketingHeroImageFieldsSchema.safeParse(rawFields);
+    if (!parsedFields.success) {
+      return reply
+        .status(400)
+        .send(errorReply("invalid_request", "Anfrage-Felder entsprechen nicht dem erwarteten Schema."));
+    }
+
+    const { processed, failed } = await processPhotos([file]);
+    if (processed.length === 0) {
+      return reply.status(422).send({
+        ...errorReply("no_processable_photo", "Foto konnte nicht verarbeitet werden."),
+        photo_warnings: failed,
+      });
+    }
+
+    try {
+      const sourceBuffer = Buffer.from(processed[0].base64, "base64");
+      const heroImageBuffer = await composeMarketingHeroImage(sourceBuffer, {
+        title: parsedFields.data.title,
+        priceChf: parsedFields.data.price_chf,
+        conditionGuess: parsedFields.data.condition_guess,
+      });
+      const result: HeroImageComposingResult = {
+        image_base64: heroImageBuffer.toString("base64"),
+        media_type: "image/jpeg",
+      };
+      return reply.status(200).send(result);
+    } catch (err) {
+      req.log.error(err, "Marketing-Titelbild fehlgeschlagen");
+      return reply
+        .status(502)
+        .send(errorReply("hero_image_failed", "Titelbild konnte nicht erstellt werden. Bitte nochmals versuchen."));
+    }
+  });
 }

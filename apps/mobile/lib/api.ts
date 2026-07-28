@@ -10,8 +10,7 @@ import type {
   CollectorResearchRequest,
   CollectorValueResponse,
   HeroImageComposingResult,
-  GenerateMoodImageRequest,
-  HeroImageGenerativeResult,
+  ComposeMarketingHeroImageFields,
   EbayDraftFields,
   EbayDraftResult,
 } from "@verkaufs-app/shared";
@@ -95,18 +94,26 @@ export async function composeHeroImage(photo: ImagePickerAsset): Promise<HeroIma
   return body as HeroImageComposingResult;
 }
 
-export async function generateMoodImage(input: GenerateMoodImageRequest): Promise<HeroImageGenerativeResult> {
-  const res = await fetch(`${API_BASE_URL}/items/hero-image/generative`, {
+export async function composeMarketingHeroImage(
+  photo: ImagePickerAsset,
+  fields: ComposeMarketingHeroImageFields
+): Promise<HeroImageComposingResult> {
+  const form = new FormData();
+  await appendPhoto(form, photo, 0);
+  form.append("title", fields.title);
+  form.append("price_chf", String(fields.price_chf));
+  if (fields.condition_guess) form.append("condition_guess", fields.condition_guess);
+
+  const res = await fetch(`${API_BASE_URL}/items/hero-image/marketing`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: form,
   });
 
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     throw new ApiRequestError(res.status, body);
   }
-  return body as HeroImageGenerativeResult;
+  return body as HeroImageComposingResult;
 }
 
 export async function getEbayStatus(): Promise<{ connected: boolean }> {

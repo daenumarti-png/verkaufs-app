@@ -9,7 +9,7 @@ import {
   refineEstimate,
   researchCollectorValue,
   composeHeroImage,
-  generateMoodImage,
+  composeMarketingHeroImage,
   getEbayStatus,
   createEbayDraft,
   ApiRequestError,
@@ -343,10 +343,9 @@ function ItemCard({
 
       <HeroImageBlock
         photos={photos}
-        itemName={item.name}
-        category={item.category}
+        suggestedTitle={item.suggested_title}
+        priceChfMax={item.estimated_price_chf_max}
         conditionGuess={item.condition_guess}
-        bestSellingPeriod={item.best_selling_period.period}
       />
 
       {item.missing_photo_suggestions.length > 0 && (
@@ -494,29 +493,26 @@ function CollectorValueBlock({
 
 function HeroImageBlock({
   photos,
-  itemName,
-  category,
+  suggestedTitle,
+  priceChfMax,
   conditionGuess,
-  bestSellingPeriod,
 }: {
   photos: ImagePicker.ImagePickerAsset[];
-  itemName: string;
-  category: string;
+  suggestedTitle: string;
+  priceChfMax: number;
   conditionGuess: string;
-  bestSellingPeriod: string;
 }) {
   const [sourceIndex, setSourceIndex] = useState(0);
 
   const composingMutation = useMutation({
     mutationFn: () => composeHeroImage(photos[sourceIndex]),
   });
-  const moodMutation = useMutation({
+  const marketingMutation = useMutation({
     mutationFn: () =>
-      generateMoodImage({
-        name: itemName,
-        category,
+      composeMarketingHeroImage(photos[sourceIndex], {
+        title: suggestedTitle,
+        price_chf: Math.round(priceChfMax),
         condition_guess: conditionGuess,
-        best_selling_period: bestSellingPeriod,
       }),
   });
 
@@ -526,11 +522,11 @@ function HeroImageBlock({
       : composingMutation.error
         ? "Titelfoto konnte nicht erstellt werden. Bitte nochmals versuchen."
         : null;
-  const moodErrorMessage =
-    moodMutation.error instanceof ApiRequestError
-      ? moodMutation.error.message
-      : moodMutation.error
-        ? "Stimmungsbild konnte nicht erstellt werden. Bitte nochmals versuchen."
+  const marketingErrorMessage =
+    marketingMutation.error instanceof ApiRequestError
+      ? marketingMutation.error.message
+      : marketingMutation.error
+        ? "Titelbild konnte nicht erstellt werden. Bitte nochmals versuchen."
         : null;
 
   if (photos.length === 0) return null;
@@ -565,14 +561,14 @@ function HeroImageBlock({
           )}
         </Pressable>
         <Pressable
-          onPress={() => moodMutation.mutate()}
-          disabled={moodMutation.isPending}
-          style={[styles.heroButton, moodMutation.isPending && styles.collectorButtonDisabled]}
+          onPress={() => marketingMutation.mutate()}
+          disabled={marketingMutation.isPending}
+          style={[styles.heroButton, marketingMutation.isPending && styles.collectorButtonDisabled]}
         >
-          {moodMutation.isPending ? (
+          {marketingMutation.isPending ? (
             <ActivityIndicator color={ACCENT} />
           ) : (
-            <Text style={styles.heroButtonText}>Stimmungsbild (KI)</Text>
+            <Text style={styles.heroButtonText}>Marketing-Titelbild</Text>
           )}
         </Pressable>
       </View>
@@ -590,16 +586,15 @@ function HeroImageBlock({
         </View>
       )}
 
-      {moodErrorMessage && <Text style={styles.collectorErrorText}>{moodErrorMessage}</Text>}
-      {moodMutation.data && (
+      {marketingErrorMessage && <Text style={styles.collectorErrorText}>{marketingErrorMessage}</Text>}
+      {marketingMutation.data && (
         <View style={styles.heroResult}>
           <Image
-            source={{ uri: `data:${moodMutation.data.media_type};base64,${moodMutation.data.image_base64}` }}
+            source={{ uri: `data:${marketingMutation.data.media_type};base64,${marketingMutation.data.image_base64}` }}
             style={styles.heroResultImage}
           />
-          <Text style={styles.heroMoodDisclaimer}>{moodMutation.data.disclaimer}</Text>
-          <Pressable onPress={() => moodMutation.mutate()}>
-            <Text style={styles.heroRegenerateText}>Neu generieren</Text>
+          <Pressable onPress={() => marketingMutation.mutate()}>
+            <Text style={styles.heroRegenerateText}>Neu erstellen</Text>
           </Pressable>
         </View>
       )}
@@ -848,7 +843,6 @@ const styles = StyleSheet.create({
   heroButtonText: { color: TEAL, fontSize: 12.5, fontWeight: "700" },
   heroResult: { marginTop: 12, alignItems: "center" },
   heroResultImage: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: BG },
-  heroMoodDisclaimer: { color: MUTED, fontSize: 10.5, lineHeight: 15, marginTop: 6, textAlign: "center" },
   heroRegenerateText: { color: ACCENT, fontSize: 12, fontWeight: "600", marginTop: 8 },
   missingPhotos: { marginBottom: 12 },
   missingPhotosLabel: { color: MUTED, fontSize: 11.5, marginBottom: 4 },

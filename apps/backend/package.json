@@ -28,7 +28,6 @@
     "google-auth-library": "^10.9.1",
     "heic-convert": "^2.1.0",
     "jose": "^6.2.4",
-    "openai": "^6.49.0",
     "sharp": "^0.33.5",
     "zod": "^3.23.8"
   },
