@@ -9,6 +9,9 @@ import type {
   PrepareListingsResponse,
   CollectorResearchRequest,
   CollectorValueResponse,
+  HeroImageComposingResult,
+  GenerateMoodImageRequest,
+  HeroImageGenerativeResult,
 } from "@verkaufs-app/shared";
 import { getOrCreateGuestDeviceId } from "./guest-device-id";
 import { getItem } from "./storage";
@@ -72,6 +75,36 @@ export async function analyzeItems(photos: ImagePickerAsset[]): Promise<AnalyzeI
     throw new ApiRequestError(res.status, body);
   }
   return body as AnalyzeItemsResponse;
+}
+
+export async function composeHeroImage(photo: ImagePickerAsset): Promise<HeroImageComposingResult> {
+  const form = new FormData();
+  await appendPhoto(form, photo, 0);
+
+  const res = await fetch(`${API_BASE_URL}/items/hero-image/composing`, {
+    method: "POST",
+    body: form,
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as HeroImageComposingResult;
+}
+
+export async function generateMoodImage(input: GenerateMoodImageRequest): Promise<HeroImageGenerativeResult> {
+  const res = await fetch(`${API_BASE_URL}/items/hero-image/generative`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as HeroImageGenerativeResult;
 }
 
 export async function researchCollectorValue(input: CollectorResearchRequest): Promise<CollectorValueResponse> {

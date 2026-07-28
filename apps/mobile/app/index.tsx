@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useMutation } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
 import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser, CollectorValueResult } from "@verkaufs-app/shared";
-import { analyzeItems, refineEstimate, researchCollectorValue, ApiRequestError } from "../lib/api";
+import { analyzeItems, refineEstimate, researchCollectorValue, composeHeroImage, generateMoodImage, ApiRequestError } from "../lib/api";
 import { getStoredUser, signOut } from "../lib/auth";
 import { setExportItem } from "../lib/export-store";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor, confidenceColor } from "../constants/theme";
@@ -252,6 +252,7 @@ export default function HomeScreen() {
               refinementNote={refinementNotes[index]}
               onAnswerChip={handleAnswerChip}
               onExport={handleExport}
+              photos={photos}
             />
           ))}
 
@@ -275,6 +276,7 @@ function ItemCard({
   refinementNote,
   onAnswerChip,
   onExport,
+  photos,
 }: {
   item: AnalyzedItem;
   itemIndex: number;
@@ -283,6 +285,7 @@ function ItemCard({
   refinementNote?: string;
   onAnswerChip: (itemIndex: number, question: string, option: string) => void;
   onExport: (item: AnalyzedItem) => void;
+  photos: ImagePicker.ImagePickerAsset[];
 }) {
   return (
     <View style={styles.itemCard}>
@@ -320,6 +323,14 @@ function ItemCard({
           estimatedPriceChfMax={item.estimated_price_chf_max}
         />
       )}
+
+      <HeroImageBlock
+        photos={photos}
+        itemName={item.name}
+        category={item.category}
+        conditionGuess={item.condition_guess}
+        bestSellingPeriod={item.best_selling_period.period}
+      />
 
       {item.missing_photo_suggestions.length > 0 && (
         <View style={styles.missingPhotos}>
@@ -462,6 +473,121 @@ function CollectorValueBlock({
   );
 }
 
+function HeroImageBlock({
+  photos,
+  itemName,
+  category,
+  conditionGuess,
+  bestSellingPeriod,
+}: {
+  photos: ImagePicker.ImagePickerAsset[];
+  itemName: string;
+  category: string;
+  conditionGuess: string;
+  bestSellingPeriod: string;
+}) {
+  const [sourceIndex, setSourceIndex] = useState(0);
+
+  const composingMutation = useMutation({
+    mutationFn: () => composeHeroImage(photos[sourceIndex]),
+  });
+  const moodMutation = useMutation({
+    mutationFn: () =>
+      generateMoodImage({
+        name: itemName,
+        category,
+        condition_guess: conditionGuess,
+        best_selling_period: bestSellingPeriod,
+      }),
+  });
+
+  const composingErrorMessage =
+    composingMutation.error instanceof ApiRequestError
+      ? composingMutation.error.message
+      : composingMutation.error
+        ? "Titelfoto konnte nicht erstellt werden. Bitte nochmals versuchen."
+        : null;
+  const moodErrorMessage =
+    moodMutation.error instanceof ApiRequestError
+      ? moodMutation.error.message
+      : moodMutation.error
+        ? "Stimmungsbild konnte nicht erstellt werden. Bitte nochmals versuchen."
+        : null;
+
+  if (photos.length === 0) return null;
+
+  return (
+    <View style={styles.heroBox}>
+      <Text style={styles.heroTitle}>Titelfoto</Text>
+
+      {photos.length > 1 && (
+        <View style={styles.heroSourceRow}>
+          {photos.map((photo, i) => (
+            <Pressable key={photo.assetId ?? photo.uri ?? i} onPress={() => setSourceIndex(i)}>
+              <Image
+                source={{ uri: photo.uri }}
+                style={[styles.heroSourceThumb, i === sourceIndex && styles.heroSourceThumbSelected]}
+              />
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.heroButtonRow}>
+        <Pressable
+          onPress={() => composingMutation.mutate()}
+          disabled={composingMutation.isPending}
+          style={[styles.heroButton, composingMutation.isPending && styles.collectorButtonDisabled]}
+        >
+          {composingMutation.isPending ? (
+            <ActivityIndicator color={ACCENT} />
+          ) : (
+            <Text style={styles.heroButtonText}>Freisteller erstellen</Text>
+          )}
+        </Pressable>
+        <Pressable
+          onPress={() => moodMutation.mutate()}
+          disabled={moodMutation.isPending}
+          style={[styles.heroButton, moodMutation.isPending && styles.collectorButtonDisabled]}
+        >
+          {moodMutation.isPending ? (
+            <ActivityIndicator color={ACCENT} />
+          ) : (
+            <Text style={styles.heroButtonText}>Stimmungsbild (KI)</Text>
+          )}
+        </Pressable>
+      </View>
+
+      {composingErrorMessage && <Text style={styles.collectorErrorText}>{composingErrorMessage}</Text>}
+      {composingMutation.data && (
+        <View style={styles.heroResult}>
+          <Image
+            source={{ uri: `data:${composingMutation.data.media_type};base64,${composingMutation.data.image_base64}` }}
+            style={styles.heroResultImage}
+          />
+          <Pressable onPress={() => composingMutation.mutate()}>
+            <Text style={styles.heroRegenerateText}>Neu erstellen</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {moodErrorMessage && <Text style={styles.collectorErrorText}>{moodErrorMessage}</Text>}
+      {moodMutation.data && (
+        <View style={styles.heroResult}>
+          <Image
+            source={{ uri: `data:${moodMutation.data.media_type};base64,${moodMutation.data.image_base64}` }}
+            style={styles.heroResultImage}
+          />
+          <Text style={styles.heroMoodDisclaimer}>{moodMutation.data.disclaimer}</Text>
+          <Pressable onPress={() => moodMutation.mutate()}>
+            <Text style={styles.heroRegenerateText}>Neu generieren</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   scrollContent: { flexGrow: 1, alignItems: "center" },
@@ -576,6 +702,25 @@ const styles = StyleSheet.create({
   collectorSourcesLabel: { color: MUTED, fontSize: 11.5, marginBottom: 2 },
   collectorSourceLink: { color: TEAL, fontSize: 12.5, textDecorationLine: "underline" },
   collectorDisclaimer: { color: MUTED, fontSize: 10.5, lineHeight: 15 },
+  heroBox: { marginBottom: 12 },
+  heroTitle: { color: TEXT, fontSize: 13.5, fontWeight: "700", marginBottom: 8 },
+  heroSourceRow: { flexDirection: "row", gap: 6, marginBottom: 8 },
+  heroSourceThumb: { width: 44, height: 44, borderRadius: 8, opacity: 0.5 },
+  heroSourceThumbSelected: { opacity: 1, borderWidth: 2, borderColor: ACCENT },
+  heroButtonRow: { flexDirection: "row", gap: 8 },
+  heroButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: TEAL,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  heroButtonText: { color: TEAL, fontSize: 12.5, fontWeight: "700" },
+  heroResult: { marginTop: 12, alignItems: "center" },
+  heroResultImage: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: BG },
+  heroMoodDisclaimer: { color: MUTED, fontSize: 10.5, lineHeight: 15, marginTop: 6, textAlign: "center" },
+  heroRegenerateText: { color: ACCENT, fontSize: 12, fontWeight: "600", marginTop: 8 },
   missingPhotos: { marginBottom: 12 },
   missingPhotosLabel: { color: MUTED, fontSize: 11.5, marginBottom: 4 },
   missingPhotoItem: { color: TEXT, fontSize: 12.5, lineHeight: 18 },
