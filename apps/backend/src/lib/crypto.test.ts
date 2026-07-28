@@ -30,7 +30,13 @@ describe("encryptSecret / decryptSecret", () => {
   it("schlägt bei manipuliertem Ciphertext fehl (Auth-Tag-Prüfung)", () => {
     const encrypted = encryptSecret("geheim", KEY);
     const [iv, authTag, ciphertext] = encrypted.split(":");
-    const tampered = `${iv}:${authTag}:${ciphertext.slice(0, -2)}ff`;
+    // Letztes Byte per XOR mit 0xff kippen – garantiert IMMER einen anderen
+    // Wert (im Gegensatz zu einem festen Ersatzwert wie "ff", der beim
+    // seltenen Zufall eines bereits "ff"-wertigen letzten Bytes ein
+    // No-op wäre und den Test dann fälschlich durchfallen liesse).
+    const lastByte = parseInt(ciphertext.slice(-2), 16);
+    const flippedByte = (lastByte ^ 0xff).toString(16).padStart(2, "0");
+    const tampered = `${iv}:${authTag}:${ciphertext.slice(0, -2)}${flippedByte}`;
     expect(() => decryptSecret(tampered, KEY)).toThrow();
   });
 
