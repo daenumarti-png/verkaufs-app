@@ -12,6 +12,8 @@ import type {
   HeroImageComposingResult,
   GenerateMoodImageRequest,
   HeroImageGenerativeResult,
+  EbayDraftFields,
+  EbayDraftResult,
 } from "@verkaufs-app/shared";
 import { getOrCreateGuestDeviceId } from "./guest-device-id";
 import { getItem } from "./storage";
@@ -105,6 +107,51 @@ export async function generateMoodImage(input: GenerateMoodImageRequest): Promis
     throw new ApiRequestError(res.status, body);
   }
   return body as HeroImageGenerativeResult;
+}
+
+export async function getEbayStatus(): Promise<{ connected: boolean }> {
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/ebay/status`, { headers });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as { connected: boolean };
+}
+
+export async function getEbayConnectUrl(): Promise<{ consent_url: string }> {
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/ebay/connect`, { headers });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as { consent_url: string };
+}
+
+export async function createEbayDraft(fields: EbayDraftFields, photos: ImagePickerAsset[]): Promise<EbayDraftResult> {
+  const form = new FormData();
+  await Promise.all(photos.map((asset, index) => appendPhoto(form, asset, index)));
+  form.append("title", fields.title);
+  form.append("description", fields.description);
+  form.append("price_chf", String(fields.price_chf));
+  form.append("category", fields.category);
+  if (fields.condition_guess) form.append("condition_guess", fields.condition_guess);
+
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/items/ebay/prepare-draft`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as EbayDraftResult;
 }
 
 export async function researchCollectorValue(input: CollectorResearchRequest): Promise<CollectorValueResponse> {

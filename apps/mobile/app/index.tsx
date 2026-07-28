@@ -1,10 +1,19 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
 import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser, CollectorValueResult } from "@verkaufs-app/shared";
-import { analyzeItems, refineEstimate, researchCollectorValue, composeHeroImage, generateMoodImage, ApiRequestError } from "../lib/api";
+import {
+  analyzeItems,
+  refineEstimate,
+  researchCollectorValue,
+  composeHeroImage,
+  generateMoodImage,
+  getEbayStatus,
+  createEbayDraft,
+  ApiRequestError,
+} from "../lib/api";
 import { getStoredUser, signOut } from "../lib/auth";
 import { setExportItem } from "../lib/export-store";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor, confidenceColor } from "../constants/theme";
@@ -159,9 +168,14 @@ export default function HomeScreen() {
           {user ? (
             <>
               <Text style={styles.accountText}>Angemeldet als {user.email}</Text>
-              <Pressable onPress={handleSignOut}>
-                <Text style={styles.accountAction}>Abmelden</Text>
-              </Pressable>
+              <View style={styles.accountActions}>
+                <Pressable onPress={() => router.push("/ebay")}>
+                  <Text style={styles.accountAction}>eBay</Text>
+                </Pressable>
+                <Pressable onPress={handleSignOut}>
+                  <Text style={styles.accountAction}>Abmelden</Text>
+                </Pressable>
+              </View>
             </>
           ) : (
             <>
@@ -253,6 +267,7 @@ export default function HomeScreen() {
               onAnswerChip={handleAnswerChip}
               onExport={handleExport}
               photos={photos}
+              isLoggedIn={Boolean(user)}
             />
           ))}
 
@@ -277,6 +292,7 @@ function ItemCard({
   onAnswerChip,
   onExport,
   photos,
+  isLoggedIn,
 }: {
   item: AnalyzedItem;
   itemIndex: number;
@@ -286,6 +302,7 @@ function ItemCard({
   onAnswerChip: (itemIndex: number, question: string, option: string) => void;
   onExport: (item: AnalyzedItem) => void;
   photos: ImagePicker.ImagePickerAsset[];
+  isLoggedIn: boolean;
 }) {
   return (
     <View style={styles.itemCard}>
@@ -373,6 +390,8 @@ function ItemCard({
       <Pressable onPress={() => onExport(item)} style={styles.exportButton}>
         <Text style={styles.exportButtonText}>Für Tutti / Ricardo / eBay exportieren</Text>
       </Pressable>
+
+      <EbayDraftBlock item={item} photos={photos} isLoggedIn={isLoggedIn} />
     </View>
   );
 }
@@ -588,6 +607,115 @@ function HeroImageBlock({
   );
 }
 
+function EbayDraftBlock({
+  item,
+  photos,
+  isLoggedIn,
+}: {
+  item: AnalyzedItem;
+  photos: ImagePicker.ImagePickerAsset[];
+  isLoggedIn: boolean;
+}) {
+  const statusQuery = useQuery({
+    queryKey: ["ebay-status"],
+    queryFn: getEbayStatus,
+    enabled: isLoggedIn,
+  });
+
+  const draftMutation = useMutation({
+    mutationFn: () =>
+      createEbayDraft(
+        {
+          title: item.suggested_title,
+          description: item.suggested_description,
+          price_chf: Math.round(item.estimated_price_chf_max),
+          category: item.category,
+          condition_guess: item.condition_guess,
+        },
+        photos
+      ),
+  });
+
+  const draftErrorMessage =
+    draftMutation.error instanceof ApiRequestError
+      ? draftMutation.error.message
+      : draftMutation.error
+        ? "eBay-Entwurf konnte nicht erstellt werden. Bitte nochmals versuchen."
+        : null;
+
+  if (!isLoggedIn) {
+    return (
+      <View style={styles.ebayBox}>
+        <Text style={styles.ebayHintText}>
+          Für einen eBay-Entwurf zuerst{" "}
+          <Text style={styles.ebayHintLink} onPress={() => router.push("/login")}>
+            anmelden
+          </Text>
+          .
+        </Text>
+      </View>
+    );
+  }
+
+  if (statusQuery.isPending) {
+    return (
+      <View style={styles.ebayBox}>
+        <ActivityIndicator color={ACCENT} />
+      </View>
+    );
+  }
+
+  if (!statusQuery.data?.connected) {
+    return (
+      <View style={styles.ebayBox}>
+        <Text style={styles.ebayHintText}>
+          Für einen eBay-Entwurf zuerst{" "}
+          <Text style={styles.ebayHintLink} onPress={() => router.push("/ebay")}>
+            eBay-Konto verknüpfen
+          </Text>
+          .
+        </Text>
+      </View>
+    );
+  }
+
+  if (draftMutation.data) {
+    const result = draftMutation.data;
+    return (
+      <View style={styles.ebayBox}>
+        <View style={styles.ebayResultBox}>
+          <Text style={styles.ebayResultTitle}>
+            eBay-Entwurf angelegt · {result.ebay_environment === "SANDBOX" ? "Sandbox" : "Produktiv"}
+          </Text>
+          <Text style={styles.ebayResultDetail}>Kategorie: {result.category_used.name}</Text>
+          <Text style={styles.ebayResultDetail}>SKU: {result.sku}</Text>
+          <Text style={styles.ebayResultNote}>{result.note}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.ebayBox}>
+      <Pressable
+        onPress={() => draftMutation.mutate()}
+        disabled={draftMutation.isPending}
+        style={[styles.ebayButton, draftMutation.isPending && styles.collectorButtonDisabled]}
+      >
+        {draftMutation.isPending ? (
+          <View style={styles.buttonRow}>
+            <ActivityIndicator color={TEAL} />
+            <Text style={styles.ebayButtonText}>Lege Entwurf an …</Text>
+          </View>
+        ) : (
+          <Text style={styles.ebayButtonText}>Als eBay-Entwurf anlegen</Text>
+        )}
+      </Pressable>
+      {draftErrorMessage && <Text style={styles.collectorErrorText}>{draftErrorMessage}</Text>}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: BG },
   scrollContent: { flexGrow: 1, alignItems: "center" },
@@ -604,6 +732,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   accountText: { color: MUTED, fontSize: 12.5 },
+  accountActions: { flexDirection: "row", gap: 16 },
   accountAction: { color: ACCENT, fontSize: 12.5, fontWeight: "700" },
   kicker: { color: MUTED, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase" },
   title: { color: TEXT, fontSize: 28, fontWeight: "700", marginTop: 6, marginBottom: 4 },
@@ -748,6 +877,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   exportButtonText: { color: ACCENT, fontSize: 13, fontWeight: "700" },
+  ebayBox: { marginTop: 10 },
+  ebayHintText: { color: MUTED, fontSize: 12, lineHeight: 17 },
+  ebayHintLink: { color: ACCENT, fontWeight: "700" },
+  ebayButton: {
+    borderWidth: 1,
+    borderColor: TEAL,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  ebayButtonText: { color: TEAL, fontSize: 13, fontWeight: "700" },
+  ebayResultBox: { backgroundColor: BG, borderRadius: 10, padding: 12 },
+  ebayResultTitle: { color: TEAL, fontSize: 13, fontWeight: "700", marginBottom: 6 },
+  ebayResultDetail: { color: TEXT, fontSize: 12.5, marginBottom: 3 },
+  ebayResultNote: { color: MUTED, fontSize: 11.5, lineHeight: 16, marginTop: 6 },
   finalDisclaimer: { color: MUTED, fontSize: 11, textAlign: "center", marginTop: 4, marginBottom: 14, lineHeight: 16 },
   resetButton: { alignItems: "center", paddingVertical: 11 },
   resetButtonText: { color: MUTED, fontSize: 13 },
