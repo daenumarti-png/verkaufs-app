@@ -1,9 +1,11 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useMutation } from "@tanstack/react-query";
-import type { AnalyzedItem, AnalyzeItemsResponse } from "@verkaufs-app/shared";
+import { router, useFocusEffect } from "expo-router";
+import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser } from "@verkaufs-app/shared";
 import { analyzeItems, refineEstimate, ApiRequestError } from "../lib/api";
+import { getStoredUser, signOut } from "../lib/auth";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor } from "../constants/theme";
 
 const MAX_PHOTOS = 6;
@@ -17,6 +19,22 @@ export default function HomeScreen() {
   const [answeredChips, setAnsweredChips] = useState<Record<string, string>>({});
   const [refinementNotes, setRefinementNotes] = useState<Record<number, string>>({});
   const [refiningIndex, setRefiningIndex] = useState<number | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [userChecked, setUserChecked] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      getStoredUser().then((stored) => {
+        setUser(stored);
+        setUserChecked(true);
+      });
+    }, [])
+  );
+
+  const handleSignOut = async () => {
+    await signOut();
+    setUser(null);
+  };
 
   const analyzeMutation = useMutation({
     mutationFn: () => analyzeItems(photos),
@@ -120,6 +138,26 @@ export default function HomeScreen() {
           Bis zu {MAX_PHOTOS} Fotos. Die KI erkennt Artikel, schätzt Preis, Score und Verkaufsdauer.
         </Text>
       </View>
+
+      {userChecked && (
+        <View style={styles.accountRow}>
+          {user ? (
+            <>
+              <Text style={styles.accountText}>Angemeldet als {user.email}</Text>
+              <Pressable onPress={handleSignOut}>
+                <Text style={styles.accountAction}>Abmelden</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.accountText}>Gastmodus · bis zu 5 Artikel</Text>
+              <Pressable onPress={() => router.push("/login")}>
+                <Text style={styles.accountAction}>Anmelden</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      )}
 
       <View style={styles.disclaimerBox}>
         <Text style={styles.disclaimerText}>
@@ -301,6 +339,18 @@ const styles = StyleSheet.create({
   scrollContent: { flexGrow: 1, alignItems: "center" },
   content: { maxWidth: 480, width: "100%", padding: 16, paddingBottom: 48 },
   header: { marginBottom: 16 },
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: CARD,
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+  },
+  accountText: { color: MUTED, fontSize: 12.5 },
+  accountAction: { color: ACCENT, fontSize: 12.5, fontWeight: "700" },
   kicker: { color: MUTED, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase" },
   title: { color: TEXT, fontSize: 28, fontWeight: "700", marginTop: 6, marginBottom: 4 },
   subtitle: { color: MUTED, fontSize: 14 },
