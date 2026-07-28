@@ -1,13 +1,13 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useMutation } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
-import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser } from "@verkaufs-app/shared";
-import { analyzeItems, refineEstimate, ApiRequestError } from "../lib/api";
+import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser, CollectorValueResult } from "@verkaufs-app/shared";
+import { analyzeItems, refineEstimate, researchCollectorValue, ApiRequestError } from "../lib/api";
 import { getStoredUser, signOut } from "../lib/auth";
 import { setExportItem } from "../lib/export-store";
-import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor } from "../constants/theme";
+import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor, confidenceColor } from "../constants/theme";
 
 const MAX_PHOTOS = 6;
 
@@ -311,6 +311,16 @@ function ItemCard({
         Bester Verkaufszeitraum: {item.best_selling_period.period} – {item.best_selling_period.reasoning}
       </Text>
 
+      {item.possible_collector_value && (
+        <CollectorValueBlock
+          name={item.name}
+          category={item.category}
+          conditionGuess={item.condition_guess}
+          estimatedPriceChfMin={item.estimated_price_chf_min}
+          estimatedPriceChfMax={item.estimated_price_chf_max}
+        />
+      )}
+
       {item.missing_photo_suggestions.length > 0 && (
         <View style={styles.missingPhotos}>
           <Text style={styles.missingPhotosLabel}>Noch fotografieren:</Text>
@@ -352,6 +362,102 @@ function ItemCard({
       <Pressable onPress={() => onExport(item)} style={styles.exportButton}>
         <Text style={styles.exportButtonText}>Für Tutti / Ricardo / eBay exportieren</Text>
       </Pressable>
+    </View>
+  );
+}
+
+const CONFIDENCE_LABELS: Record<CollectorValueResult["confidence"], string> = {
+  low: "Niedrige Verlässlichkeit",
+  medium: "Mittlere Verlässlichkeit",
+  high: "Hohe Verlässlichkeit",
+};
+
+function CollectorValueBlock({
+  name,
+  category,
+  conditionGuess,
+  estimatedPriceChfMin,
+  estimatedPriceChfMax,
+}: {
+  name: string;
+  category: string;
+  conditionGuess: string;
+  estimatedPriceChfMin: number;
+  estimatedPriceChfMax: number;
+}) {
+  const mutation = useMutation({
+    mutationFn: () =>
+      researchCollectorValue({
+        name,
+        category,
+        condition_guess: conditionGuess,
+        current_estimate: {
+          estimated_price_chf_min: estimatedPriceChfMin,
+          estimated_price_chf_max: estimatedPriceChfMax,
+        },
+      }),
+  });
+
+  const errorMessage =
+    mutation.error instanceof ApiRequestError
+      ? mutation.error.message
+      : mutation.error
+        ? "Recherche fehlgeschlagen. Bitte nochmals versuchen."
+        : null;
+
+  if (mutation.data) {
+    const result = mutation.data;
+    return (
+      <View style={styles.collectorBox}>
+        <View style={styles.collectorHeaderRow}>
+          <Text style={styles.collectorTitle}>Sammlerwert-Recherche</Text>
+          <Text style={[styles.collectorConfidence, { color: confidenceColor(result.confidence) }]}>
+            {CONFIDENCE_LABELS[result.confidence]}
+          </Text>
+        </View>
+        <Text style={[styles.collectorScore, { color: scoreColor(result.collector_value_score) }]}>
+          Sammlerwert-Score {result.collector_value_score}/10
+        </Text>
+        <Text style={styles.collectorReasoning}>{result.reasoning}</Text>
+        <Text style={styles.collectorPrice}>
+          Angepasste Preisspanne: CHF {result.adjusted_price_chf_min}–{result.adjusted_price_chf_max}
+        </Text>
+        <Text style={styles.collectorVenue}>
+          Empfohlener Verkaufsort: {result.sales_venue_recommendation.recommended_venue} –{" "}
+          {result.sales_venue_recommendation.reasoning}
+        </Text>
+        {result.sources.length > 0 && (
+          <View style={styles.collectorSources}>
+            <Text style={styles.collectorSourcesLabel}>Quellen:</Text>
+            {result.sources.map((source, i) => (
+              <Pressable key={i} onPress={() => Linking.openURL(source.url)}>
+                <Text style={styles.collectorSourceLink}>• {source.title || source.url}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+        <Text style={styles.collectorDisclaimer}>{result.disclaimer}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.collectorBox}>
+      <Pressable
+        onPress={() => mutation.mutate()}
+        disabled={mutation.isPending}
+        style={[styles.collectorButton, mutation.isPending && styles.collectorButtonDisabled]}
+      >
+        {mutation.isPending ? (
+          <View style={styles.buttonRow}>
+            <ActivityIndicator color={ACCENT} />
+            <Text style={styles.collectorButtonText}>Recherchiere im Web …</Text>
+          </View>
+        ) : (
+          <Text style={styles.collectorButtonText}>Möglicher Sammlerwert – Recherche starten</Text>
+        )}
+      </Pressable>
+      {errorMessage && <Text style={styles.collectorErrorText}>{errorMessage}</Text>}
     </View>
   );
 }
@@ -447,6 +553,29 @@ const styles = StyleSheet.create({
   priceBadgeText: { color: ACCENT, fontSize: 18, fontWeight: "700" },
   badgeText: { color: TEXT, fontSize: 13, fontWeight: "600" },
   seasonText: { color: MUTED, fontSize: 12, marginBottom: 10, lineHeight: 17 },
+  collectorBox: { marginBottom: 12 },
+  collectorButton: {
+    borderWidth: 1,
+    borderColor: ACCENT,
+    borderStyle: "dashed",
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: "center",
+  },
+  collectorButtonDisabled: { opacity: 0.6 },
+  collectorButtonText: { color: ACCENT, fontSize: 12.5, fontWeight: "700" },
+  collectorErrorText: { color: "#E08A6F", fontSize: 12, marginTop: 6 },
+  collectorHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  collectorTitle: { color: TEXT, fontSize: 13.5, fontWeight: "700" },
+  collectorConfidence: { fontSize: 11, fontWeight: "600" },
+  collectorScore: { fontSize: 13, fontWeight: "700", marginBottom: 4 },
+  collectorReasoning: { color: TEXT, fontSize: 13, lineHeight: 19, marginBottom: 8 },
+  collectorPrice: { color: ACCENT, fontSize: 13, fontWeight: "700", marginBottom: 6 },
+  collectorVenue: { color: TEXT, fontSize: 12.5, lineHeight: 18, marginBottom: 8 },
+  collectorSources: { marginBottom: 8, gap: 3 },
+  collectorSourcesLabel: { color: MUTED, fontSize: 11.5, marginBottom: 2 },
+  collectorSourceLink: { color: TEAL, fontSize: 12.5, textDecorationLine: "underline" },
+  collectorDisclaimer: { color: MUTED, fontSize: 10.5, lineHeight: 15 },
   missingPhotos: { marginBottom: 12 },
   missingPhotosLabel: { color: MUTED, fontSize: 11.5, marginBottom: 4 },
   missingPhotoItem: { color: TEXT, fontSize: 12.5, lineHeight: 18 },

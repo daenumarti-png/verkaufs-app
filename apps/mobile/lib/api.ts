@@ -7,6 +7,8 @@ import type {
   RefineEstimateResponse,
   PrepareListingsRequest,
   PrepareListingsResponse,
+  CollectorResearchRequest,
+  CollectorValueResponse,
 } from "@verkaufs-app/shared";
 import { getOrCreateGuestDeviceId } from "./guest-device-id";
 import { getItem } from "./storage";
@@ -70,6 +72,21 @@ export async function analyzeItems(photos: ImagePickerAsset[]): Promise<AnalyzeI
     throw new ApiRequestError(res.status, body);
   }
   return body as AnalyzeItemsResponse;
+}
+
+export async function researchCollectorValue(input: CollectorResearchRequest): Promise<CollectorValueResponse> {
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/items/research-collector-value`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as CollectorValueResponse;
 }
 
 export async function prepareListings(input: PrepareListingsRequest): Promise<PrepareListingsResponse> {

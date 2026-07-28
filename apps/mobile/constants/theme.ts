@@ -13,3 +13,9 @@ export function scoreColor(score: number): string {
   if (score >= 4) return ACCENT;
   return DANGER;
 }
+
+export function confidenceColor(confidence: "low" | "medium" | "high"): string {
+  if (confidence === "high") return TEAL;
+  if (confidence === "medium") return ACCENT;
+  return DANGER;
+}
