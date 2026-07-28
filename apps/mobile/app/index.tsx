@@ -1,34 +1,399 @@
-import { StyleSheet, Text, View } from "react-native";
+import React, { useState } from "react";
+import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { useMutation } from "@tanstack/react-query";
+import type { AnalyzedItem, AnalyzeItemsResponse } from "@verkaufs-app/shared";
+import { analyzeItems, refineEstimate, ApiRequestError } from "../lib/api";
+import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor } from "../constants/theme";
 
-// Platzhalter-Screen für Phase 1 (Setup). Der eigentliche Foto-Upload- und
-// Analyse-Flow aus dem Prototyp (verkaufs-app-prototyp.jsx) wird ab Phase 2
-// gegen das serverseitige Backend neu aufgebaut, nicht 1:1 client-seitig kopiert.
+const MAX_PHOTOS = 6;
+
+type ResultMeta = Omit<AnalyzeItemsResponse, "items">;
+
 export default function HomeScreen() {
+  const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [items, setItems] = useState<AnalyzedItem[] | null>(null);
+  const [resultMeta, setResultMeta] = useState<ResultMeta | null>(null);
+  const [answeredChips, setAnsweredChips] = useState<Record<string, string>>({});
+  const [refinementNotes, setRefinementNotes] = useState<Record<number, string>>({});
+  const [refiningIndex, setRefiningIndex] = useState<number | null>(null);
+
+  const analyzeMutation = useMutation({
+    mutationFn: () => analyzeItems(photos),
+    onSuccess: (data) => {
+      const { items: newItems, ...meta } = data;
+      setItems(newItems);
+      setResultMeta(meta);
+      setAnsweredChips({});
+      setRefinementNotes({});
+    },
+  });
+
+  const errorMessage =
+    analyzeMutation.error instanceof ApiRequestError
+      ? analyzeMutation.error.message
+      : analyzeMutation.error
+        ? "Analyse fehlgeschlagen. Bitte nochmals versuchen."
+        : null;
+
+  const pickFromCamera = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) return;
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+    if (!result.canceled) {
+      setPhotos((prev) => [...prev, ...result.assets].slice(0, MAX_PHOTOS));
+    }
+  };
+
+  const pickFromLibrary = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      quality: 0.8,
+      allowsMultipleSelection: true,
+      selectionLimit: MAX_PHOTOS - photos.length,
+    });
+    if (!result.canceled) {
+      setPhotos((prev) => [...prev, ...result.assets].slice(0, MAX_PHOTOS));
+    }
+  };
+
+  const removePhoto = (index: number) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const reset = () => {
+    setPhotos([]);
+    setItems(null);
+    setResultMeta(null);
+    setAnsweredChips({});
+    setRefinementNotes({});
+    analyzeMutation.reset();
+  };
+
+  const handleAnswerChip = async (itemIndex: number, question: string, option: string) => {
+    if (!items) return;
+    const key = `${itemIndex}-${question}`;
+    setAnsweredChips((prev) => ({ ...prev, [key]: option }));
+    setRefiningIndex(itemIndex);
+    const item = items[itemIndex];
+    try {
+      const updated = await refineEstimate({
+        name: item.name,
+        category: item.category,
+        condition_guess: item.condition_guess,
+        current_estimate: {
+          estimated_price_chf_min: item.estimated_price_chf_min,
+          estimated_price_chf_max: item.estimated_price_chf_max,
+          sell_score: item.sell_score,
+          estimated_days_to_sell: item.estimated_days_to_sell,
+        },
+        clarifying_answers: [{ question, selected_option: option }],
+      });
+      setItems((prev) => {
+        if (!prev) return prev;
+        const next = [...prev];
+        next[itemIndex] = {
+          ...next[itemIndex],
+          estimated_price_chf_min: updated.estimated_price_chf_min,
+          estimated_price_chf_max: updated.estimated_price_chf_max,
+          sell_score: updated.sell_score,
+          estimated_days_to_sell: updated.estimated_days_to_sell,
+        };
+        return next;
+      });
+      setRefinementNotes((prev) => ({ ...prev, [itemIndex]: updated.adjustment_reasoning }));
+    } catch {
+      // Aktualisierung fehlgeschlagen: Chip bleibt markiert, ursprüngliche Schätzung bleibt sichtbar
+    } finally {
+      setRefiningIndex(null);
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Verkaufs-Assistent</Text>
-      <Text style={styles.subtitle}>Grundgerüst steht. Foto-Analyse folgt in Phase 2.</Text>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+      <View style={styles.content}>
+      <View style={styles.header}>
+        <Text style={styles.kicker}>Verkaufs-Assistent</Text>
+        <Text style={styles.title}>Foto rein, Inserat raus.</Text>
+        <Text style={styles.subtitle}>
+          Bis zu {MAX_PHOTOS} Fotos. Die KI erkennt Artikel, schätzt Preis, Score und Verkaufsdauer.
+        </Text>
+      </View>
+
+      <View style={styles.disclaimerBox}>
+        <Text style={styles.disclaimerText}>
+          Preis- und Score-Schätzungen basieren auf KI-Einschätzung, keine Garantie.
+        </Text>
+      </View>
+
+      <View style={styles.photoGrid}>
+        {photos.map((photo, index) => (
+          <View key={photo.assetId ?? photo.uri ?? index} style={styles.photoTile}>
+            <Image source={{ uri: photo.uri }} style={styles.photoImage} />
+            <Pressable onPress={() => removePhoto(index)} style={styles.removeButton} accessibilityLabel="Foto entfernen">
+              <Text style={styles.removeButtonText}>×</Text>
+            </Pressable>
+          </View>
+        ))}
+        {photos.length < MAX_PHOTOS && (
+          <Pressable onPress={pickFromCamera} style={styles.addTile}>
+            <Text style={styles.addTileText}>📷{"\n"}Aufnehmen</Text>
+          </Pressable>
+        )}
+        {photos.length < MAX_PHOTOS && (
+          <Pressable onPress={pickFromLibrary} style={styles.addTile}>
+            <Text style={styles.addTileText}>⬆{"\n"}Hochladen</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {!items && (
+        <Pressable
+          onPress={() => analyzeMutation.mutate()}
+          disabled={photos.length === 0 || analyzeMutation.isPending}
+          style={[styles.primaryButton, photos.length === 0 && styles.primaryButtonDisabled]}
+        >
+          {analyzeMutation.isPending ? (
+            <View style={styles.buttonRow}>
+              <ActivityIndicator color={BG} />
+              <Text style={styles.primaryButtonText}>Analysiere Fotos …</Text>
+            </View>
+          ) : (
+            <Text style={[styles.primaryButtonText, photos.length === 0 && styles.primaryButtonTextDisabled]}>
+              Artikel erkennen
+            </Text>
+          )}
+        </Pressable>
+      )}
+
+      {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
+
+      {items && resultMeta && (
+        <View style={styles.results}>
+          {resultMeta.staging_hint && (
+            <View style={styles.hintBox}>
+              <Text style={styles.hintText}>{resultMeta.staging_hint}</Text>
+            </View>
+          )}
+
+          {resultMeta.multi_item_detected && resultMeta.bundle_recommendation && (
+            <View style={styles.bundleCard}>
+              <Text style={styles.bundleTitle}>{items.length} Artikel erkannt</Text>
+              <Text style={styles.bundleReasoning}>{resultMeta.bundle_recommendation.reasoning}</Text>
+              <Text style={styles.bundleDecision}>
+                {resultMeta.bundle_recommendation.recommended
+                  ? `Empfehlung: als Bundle für ca. CHF ${resultMeta.bundle_recommendation.bundle_price_chf}`
+                  : "Empfehlung: einzeln verkaufen"}
+              </Text>
+            </View>
+          )}
+
+          {items.map((item, index) => (
+            <ItemCard
+              key={`${item.name}-${index}`}
+              item={item}
+              isRefining={refiningIndex === index}
+              answeredChips={answeredChips}
+              itemIndex={index}
+              refinementNote={refinementNotes[index]}
+              onAnswerChip={handleAnswerChip}
+            />
+          ))}
+
+          <Text style={styles.finalDisclaimer}>{resultMeta.disclaimer}</Text>
+
+          <Pressable onPress={reset} style={styles.resetButton}>
+            <Text style={styles.resetButtonText}>Neue Fotos analysieren</Text>
+          </Pressable>
+        </View>
+      )}
+      </View>
+    </ScrollView>
+  );
+}
+
+function ItemCard({
+  item,
+  itemIndex,
+  isRefining,
+  answeredChips,
+  refinementNote,
+  onAnswerChip,
+}: {
+  item: AnalyzedItem;
+  itemIndex: number;
+  isRefining: boolean;
+  answeredChips: Record<string, string>;
+  refinementNote?: string;
+  onAnswerChip: (itemIndex: number, question: string, option: string) => void;
+}) {
+  return (
+    <View style={styles.itemCard}>
+      <Text style={styles.itemMeta}>
+        {item.category} · {item.condition_guess}
+        {item.possible_collector_value ? " · möglicher Sammlerwert" : ""}
+      </Text>
+      <Text style={styles.itemTitle}>{item.suggested_title}</Text>
+      <Text style={styles.itemDescription}>{item.suggested_description}</Text>
+
+      <View style={styles.badgeRow}>
+        <View style={styles.badge}>
+          <Text style={styles.priceBadgeText}>
+            CHF {item.estimated_price_chf_min}–{item.estimated_price_chf_max}
+          </Text>
+        </View>
+        <View style={styles.badge}>
+          <Text style={[styles.badgeText, { color: scoreColor(item.sell_score) }]}>Score {item.sell_score}/10</Text>
+        </View>
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>~{item.estimated_days_to_sell} Tage</Text>
+        </View>
+      </View>
+
+      <Text style={styles.seasonText}>
+        Bester Verkaufszeitraum: {item.best_selling_period.period} – {item.best_selling_period.reasoning}
+      </Text>
+
+      {item.missing_photo_suggestions.length > 0 && (
+        <View style={styles.missingPhotos}>
+          <Text style={styles.missingPhotosLabel}>Noch fotografieren:</Text>
+          {item.missing_photo_suggestions.map((suggestion, i) => (
+            <Text key={i} style={styles.missingPhotoItem}>
+              • {suggestion}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      {item.clarifying_questions.length > 0 && (
+        <View style={styles.clarifyingBlock}>
+          {item.clarifying_questions.map((q) => (
+            <View key={q.question} style={styles.clarifyingQuestion}>
+              <Text style={styles.clarifyingQuestionText}>{q.question}</Text>
+              <View style={styles.chipRow}>
+                {q.options.map((option) => {
+                  const selected = answeredChips[`${itemIndex}-${q.question}`] === option;
+                  return (
+                    <Pressable
+                      key={option}
+                      onPress={() => onAnswerChip(itemIndex, q.question, option)}
+                      disabled={isRefining}
+                      style={[styles.chip, selected && styles.chipSelected]}
+                    >
+                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{option}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+          {isRefining && <ActivityIndicator color={ACCENT} style={{ marginTop: 4 }} />}
+          {refinementNote && <Text style={styles.refinementNote}>{refinementNote}</Text>}
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  screen: { flex: 1, backgroundColor: BG },
+  scrollContent: { flexGrow: 1, alignItems: "center" },
+  content: { maxWidth: 480, width: "100%", padding: 16, paddingBottom: 48 },
+  header: { marginBottom: 16 },
+  kicker: { color: MUTED, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase" },
+  title: { color: TEXT, fontSize: 28, fontWeight: "700", marginTop: 6, marginBottom: 4 },
+  subtitle: { color: MUTED, fontSize: 14 },
+  disclaimerBox: {
+    backgroundColor: "rgba(212,160,23,0.1)",
+    borderColor: "rgba(212,160,23,0.35)",
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  disclaimerText: { color: TEXT, fontSize: 12.5, lineHeight: 18 },
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 },
+  photoTile: { width: "23%", aspectRatio: 1, borderRadius: 10, overflow: "hidden", position: "relative" },
+  photoImage: { width: "100%", height: "100%" },
+  removeButton: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderRadius: 999,
+    width: 22,
+    height: 22,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#1C1B19",
-    padding: 24,
   },
-  title: {
-    color: "#EDE8DF",
-    fontSize: 24,
-    fontWeight: "700",
-    marginBottom: 8,
+  removeButtonText: { color: "#fff", fontSize: 14, lineHeight: 16 },
+  addTile: {
+    width: "23%",
+    aspectRatio: 1,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: MUTED,
+    borderStyle: "dashed",
+    backgroundColor: CARD,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  subtitle: {
-    color: "#8A857A",
-    fontSize: 14,
-    textAlign: "center",
+  addTileText: { color: MUTED, fontSize: 11, textAlign: "center" },
+  primaryButton: {
+    backgroundColor: ACCENT,
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  primaryButtonDisabled: { backgroundColor: "#3A382F" },
+  primaryButtonText: { color: BG, fontWeight: "700", fontSize: 15 },
+  primaryButtonTextDisabled: { color: MUTED },
+  buttonRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  errorText: { color: "#E08A6F", fontSize: 13, marginTop: 12 },
+  results: { marginTop: 22 },
+  hintBox: {
+    backgroundColor: CARD,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: ACCENT,
+  },
+  hintText: { color: TEXT, fontSize: 13, lineHeight: 18 },
+  bundleCard: { backgroundColor: CARD, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: "#3A382F" },
+  bundleTitle: { color: TEXT, fontSize: 13, fontWeight: "700", marginBottom: 6 },
+  bundleReasoning: { color: TEXT, fontSize: 13, lineHeight: 18, marginBottom: 4 },
+  bundleDecision: { color: TEAL, fontSize: 13, fontWeight: "700" },
+  itemCard: { backgroundColor: CARD, borderRadius: 14, padding: 16, marginBottom: 14 },
+  itemMeta: { color: MUTED, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 },
+  itemTitle: { color: TEXT, fontSize: 18, fontWeight: "600", marginBottom: 6 },
+  itemDescription: { color: TEXT, fontSize: 13.5, lineHeight: 20, marginBottom: 12 },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 10 },
+  badge: { backgroundColor: BG, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
+  priceBadgeText: { color: ACCENT, fontSize: 18, fontWeight: "700" },
+  badgeText: { color: TEXT, fontSize: 13, fontWeight: "600" },
+  seasonText: { color: MUTED, fontSize: 12, marginBottom: 10, lineHeight: 17 },
+  missingPhotos: { marginBottom: 12 },
+  missingPhotosLabel: { color: MUTED, fontSize: 11.5, marginBottom: 4 },
+  missingPhotoItem: { color: TEXT, fontSize: 12.5, lineHeight: 18 },
+  clarifyingBlock: { marginTop: 4, gap: 10 },
+  clarifyingQuestion: { gap: 6 },
+  clarifyingQuestionText: { color: TEXT, fontSize: 13, fontWeight: "600" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    borderWidth: 1,
+    borderColor: MUTED,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  chipSelected: { backgroundColor: ACCENT, borderColor: ACCENT },
+  chipText: { color: TEXT, fontSize: 12.5 },
+  chipTextSelected: { color: BG, fontWeight: "700" },
+  refinementNote: { color: TEAL, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  finalDisclaimer: { color: MUTED, fontSize: 11, textAlign: "center", marginTop: 4, marginBottom: 14, lineHeight: 16 },
+  resetButton: { alignItems: "center", paddingVertical: 11 },
+  resetButtonText: { color: MUTED, fontSize: 13 },
 });
