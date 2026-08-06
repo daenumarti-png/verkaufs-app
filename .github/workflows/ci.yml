@@ -27,6 +27,14 @@ jobs:
       - name: Typecheck (shared)
         run: npm run typecheck --workspace=packages/shared
 
+      # @verkaufs-app/shared zeigt in package.json (main/types) auf dist/,
+      # nicht mehr auf src/ (noetig, damit das Paket auch ausserhalb des
+      # Monorepo-Kontexts, z.B. beim Firebase-Functions-Deploy, aufloesbar
+      # ist) - andere Workspaces koennen es daher erst nach diesem Build-
+      # Schritt importieren.
+      - name: Build (shared)
+        run: npm run build --workspace=packages/shared
+
       - name: Typecheck (backend)
         run: npm run typecheck --workspace=apps/backend
 
