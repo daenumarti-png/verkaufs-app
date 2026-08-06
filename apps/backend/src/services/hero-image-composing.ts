@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { removeBackground } from "@imgly/background-removal-node";
+import type { BoundingBox } from "@verkaufs-app/shared";
 
 // Composing-Ansatz (Briefing Abschnitt 6, Ansatz 1): Artikel per Freisteller
 // aus dem besten Nutzerfoto isolieren, vor einen neutralen Studio-Hintergrund
@@ -29,6 +30,56 @@ const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 1200;
 const PADDING_RATIO = 0.12;
 const BANNER_HEIGHT = 230;
+
+// Phase 4b: Polster um die vom Modell gelieferte Bounding Box, bevor daraus
+// zugeschnitten wird - Vision-Model-Boxen sind oft leicht zu eng, das
+// verhindert abgeschnittene Artikelränder.
+const BBOX_PADDING_RATIO = 0.12;
+
+function isPlausibleBoundingBox(box: BoundingBox | null | undefined): box is BoundingBox {
+  if (!box) return false;
+  const { x, y, width, height } = box;
+  if (![x, y, width, height].every((n) => typeof n === "number" && Number.isFinite(n))) return false;
+  if (width <= 0 || height <= 0) return false;
+  // Grosszügig toleranztolerant statt hart auf [0,1]: leicht ausserhalb wird
+  // unten geclamped. Nur grob unplausible Werte (Modell-Halluzination, z.B.
+  // width=5) werden verworfen -> Fallback aufs ganze Foto.
+  if (x < -0.2 || y < -0.2 || x > 1.2 || y > 1.2 || width > 1.4 || height > 1.4) return false;
+  return true;
+}
+
+function clampRange(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+// Fail-safe by design: wirft NIE. Jeder Fehlerpfad (kein Bild-Metadata,
+// Rundungsfehler auf 0px, ungültige Box, sharp-Fehler) liefert das
+// UNVERÄNDERTE Originalfoto zurück -> "kein Crop, ganzes Foto" bleibt der
+// garantierte Fallback für jeden Aufrufer, der (noch) keine Bounding Box hat.
+async function cropToBoundingBox(sourceBuffer: Buffer, box: BoundingBox | null | undefined): Promise<Buffer> {
+  if (!isPlausibleBoundingBox(box)) return sourceBuffer;
+  try {
+    const { width: imgWidth, height: imgHeight } = await sharp(sourceBuffer).metadata();
+    if (!imgWidth || !imgHeight) return sourceBuffer;
+
+    const padX = box.width * BBOX_PADDING_RATIO;
+    const padY = box.height * BBOX_PADDING_RATIO;
+    const x0 = clampRange(box.x - padX, 0, 1);
+    const y0 = clampRange(box.y - padY, 0, 1);
+    const x1 = clampRange(box.x + box.width + padX, 0, 1);
+    const y1 = clampRange(box.y + box.height + padY, 0, 1);
+
+    const left = Math.round(x0 * imgWidth);
+    const top = Math.round(y0 * imgHeight);
+    const width = Math.min(Math.round((x1 - x0) * imgWidth), imgWidth - left);
+    const height = Math.min(Math.round((y1 - y0) * imgHeight), imgHeight - top);
+    if (width <= 0 || height <= 0) return sourceBuffer;
+
+    return await sharp(sourceBuffer).extract({ left, top, width, height }).toBuffer();
+  } catch {
+    return sourceBuffer;
+  }
+}
 
 export interface MarketingFacts {
   title: string;
@@ -98,12 +149,21 @@ function buildFactsBannerSvg(width: number, height: number, facts: MarketingFact
   </svg>`;
 }
 
-async function buildComposedOverlays(sourcePhotoBuffer: Buffer): Promise<sharp.OverlayOptions[]> {
+async function buildComposedOverlays(
+  sourcePhotoBuffer: Buffer,
+  boundingBox?: BoundingBox | null
+): Promise<sharp.OverlayOptions[]> {
+  // Phase 4b: falls eine Bounding Box übergeben wurde, zuerst auf genau
+  // diesen Artikel zuschneiden, damit der Freisteller nicht andere Artikel
+  // auf demselben Gruppenfoto mit einschliesst. Ohne/mit ungültiger Box:
+  // unverändertes Originalfoto (bisheriges Verhalten).
+  const croppedBuffer = await cropToBoundingBox(sourcePhotoBuffer, boundingBox);
+
   // Bewusst ein Blob mit explizitem MIME-Type statt des rohen Buffers: Die
   // Bibliothek wrapt einen rohen Buffer intern selbst in ein Blob, aber ohne
   // "type" zu setzen, was ihre eigene Formaterkennung mit "Unsupported
   // format: " (leerer String) scheitern lässt.
-  const sourceBlob = new Blob([sourcePhotoBuffer], { type: "image/jpeg" });
+  const sourceBlob = new Blob([croppedBuffer], { type: "image/jpeg" });
 
   const cutoutBlob = await removeBackground(sourceBlob, {
     publicPath: RESOURCES_PUBLIC_PATH,
@@ -146,16 +206,20 @@ async function buildComposedOverlays(sourcePhotoBuffer: Buffer): Promise<sharp.O
   ];
 }
 
-export async function composeHeroImage(sourcePhotoBuffer: Buffer): Promise<Buffer> {
-  const overlays = await buildComposedOverlays(sourcePhotoBuffer);
+export async function composeHeroImage(sourcePhotoBuffer: Buffer, boundingBox?: BoundingBox | null): Promise<Buffer> {
+  const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox);
   return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))
     .composite(overlays)
     .jpeg({ quality: 90 })
     .toBuffer();
 }
 
-export async function composeMarketingHeroImage(sourcePhotoBuffer: Buffer, facts: MarketingFacts): Promise<Buffer> {
-  const overlays = await buildComposedOverlays(sourcePhotoBuffer);
+export async function composeMarketingHeroImage(
+  sourcePhotoBuffer: Buffer,
+  facts: MarketingFacts,
+  boundingBox?: BoundingBox | null
+): Promise<Buffer> {
+  const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox);
   const banner = Buffer.from(buildFactsBannerSvg(CANVAS_WIDTH, BANNER_HEIGHT, facts));
 
   return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))

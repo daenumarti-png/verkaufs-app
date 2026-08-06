@@ -14,3 +14,9 @@ export const GLOBAL_RATE_LIMIT = { max: 100, timeWindow: "1 minute" };
 // auslösen (Anthropic/OpenAI/eBay) – hier drohen bei Missbrauch echte Kosten,
 // nicht nur Serverlast.
 export const EXPENSIVE_ENDPOINT_RATE_LIMIT = { max: 10, timeWindow: "1 minute" };
+
+// Deutlich strenger für Passwort-Login/-Registrierung: anders als bei
+// Google/Apple gibt es hier keinen vorgelagerten Provider, der wiederholte
+// Rateversuche abfängt – Brute-Force auf Passwörter muss direkt hier
+// gebremst werden.
+export const AUTH_RATE_LIMIT = { max: 8, timeWindow: "1 minute" };

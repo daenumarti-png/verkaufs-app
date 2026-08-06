@@ -3,7 +3,15 @@ import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator
 import * as ImagePicker from "expo-image-picker";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
-import type { AnalyzedItem, AnalyzeItemsResponse, AuthUser, CollectorValueResult } from "@verkaufs-app/shared";
+import type {
+  AnalyzedItem,
+  AnalyzeItemsResponse,
+  AuthUser,
+  BoundingBox,
+  CollectorValueResult,
+  ListingPlatform,
+  PrepareListingsRequest,
+} from "@verkaufs-app/shared";
 import {
   analyzeItems,
   refineEstimate,
@@ -19,6 +27,18 @@ import { setExportItem } from "../lib/export-store";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED, scoreColor, confidenceColor } from "../constants/theme";
 
 const MAX_PHOTOS = 6;
+
+// Anzeige-Labels für die KI-Plattform-Empfehlung (item.platform_recommendation) –
+// bewusst nur die drei zusätzlichen Plattformen, da Tutti/Ricardo/eBay ohnehin
+// immer als Standard-Export-Optionen angezeigt werden.
+const PLATFORM_RECOMMENDATION_LABELS: Record<ListingPlatform, string> = {
+  TUTTI: "Tutti",
+  RICARDO: "Ricardo",
+  EBAY: "eBay",
+  VINTED: "Vinted",
+  ANIBIS: "Anibis",
+  FACEBOOK_MARKETPLACE: "Facebook Marketplace",
+};
 
 type ResultMeta = Omit<AnalyzeItemsResponse, "items">;
 
@@ -67,7 +87,7 @@ export default function HomeScreen() {
   const pickFromCamera = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) return;
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.8 });
     if (!result.canceled) {
       setPhotos((prev) => [...prev, ...result.assets].slice(0, MAX_PHOTOS));
     }
@@ -77,6 +97,7 @@ export default function HomeScreen() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return;
     const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
       quality: 0.8,
       allowsMultipleSelection: true,
       selectionLimit: MAX_PHOTOS - photos.length,
@@ -109,7 +130,29 @@ export default function HomeScreen() {
       estimated_price_chf_min: item.estimated_price_chf_min,
       estimated_price_chf_max: item.estimated_price_chf_max,
       best_selling_period: item.best_selling_period.period,
-    });
+    }, item.platform_recommendation?.platform);
+    router.push("/export");
+  };
+
+  const handleExportBundle = () => {
+    const bundle = resultMeta?.bundle_recommendation;
+    if (!bundle || !bundle.recommended) return;
+    // suggested_title/suggested_description/category sind laut Schema
+    // garantiert nicht-leer, wenn recommended=true (siehe .refine() in
+    // bundleRecommendationSchema) - die Fallbacks hier greifen nur defensiv.
+    const bundleItem: PrepareListingsRequest["item"] = {
+      name: bundle.suggested_title ?? "Bundle",
+      category: bundle.category ?? "",
+      suggested_title: bundle.suggested_title ?? "",
+      suggested_description: bundle.suggested_description ?? "",
+      // Das Modell liefert nur EINEN Bundle-Preis, keine Spanne - min/max
+      // beide auf denselben Wert zu setzen ist der einzig sinnvolle Weg, das
+      // flache PrepareListingsRequest["item"]-Schema (das eine Spanne
+      // erwartet) ohne Backend-Änderung wiederzuverwenden.
+      estimated_price_chf_min: bundle.bundle_price_chf ?? 0,
+      estimated_price_chf_max: bundle.bundle_price_chf ?? 0,
+    };
+    setExportItem(bundleItem);
     router.push("/export");
   };
 
@@ -169,6 +212,9 @@ export default function HomeScreen() {
             <>
               <Text style={styles.accountText}>Angemeldet als {user.email}</Text>
               <View style={styles.accountActions}>
+                <Pressable onPress={() => router.push("/billing")}>
+                  <Text style={styles.accountAction}>Abo</Text>
+                </Pressable>
                 <Pressable onPress={() => router.push("/ebay")}>
                   <Text style={styles.accountAction}>eBay</Text>
                 </Pressable>
@@ -253,6 +299,34 @@ export default function HomeScreen() {
                   ? `Empfehlung: als Bundle für ca. CHF ${resultMeta.bundle_recommendation.bundle_price_chf}`
                   : "Empfehlung: einzeln verkaufen"}
               </Text>
+
+              {resultMeta.bundle_recommendation.recommended && resultMeta.bundle_recommendation.suggested_title && (
+                <>
+                  <Text style={styles.itemTitle}>{resultMeta.bundle_recommendation.suggested_title}</Text>
+                  <Text style={styles.itemDescription}>{resultMeta.bundle_recommendation.suggested_description}</Text>
+
+                  <HeroImageBlock
+                    photos={photos}
+                    suggestedTitle={resultMeta.bundle_recommendation.suggested_title}
+                    priceChfMax={resultMeta.bundle_recommendation.bundle_price_chf ?? 0}
+                  />
+
+                  <Pressable onPress={handleExportBundle} style={styles.exportButton}>
+                    <Text style={styles.exportButtonText}>Bundle für Tutti / Ricardo / eBay exportieren</Text>
+                  </Pressable>
+
+                  <EbayDraftBlock
+                    item={{
+                      suggested_title: resultMeta.bundle_recommendation.suggested_title,
+                      suggested_description: resultMeta.bundle_recommendation.suggested_description ?? "",
+                      estimated_price_chf_max: resultMeta.bundle_recommendation.bundle_price_chf ?? 0,
+                      category: resultMeta.bundle_recommendation.category ?? "",
+                    }}
+                    photos={photos}
+                    isLoggedIn={Boolean(user)}
+                  />
+                </>
+              )}
             </View>
           )}
 
@@ -304,6 +378,16 @@ function ItemCard({
   photos: ImagePicker.ImagePickerAsset[];
   isLoggedIn: boolean;
 }) {
+  // Nur übernehmen, wenn die KI einen validen Index in den TATSÄCHLICH
+  // hochgeladenen Fotos angegeben hat - sonst Fallback auf Foto 0 ohne Crop
+  // (bisheriges Verhalten), statt auf einen falschen Bildausschnitt zuzugreifen.
+  const hasValidSourceIndex =
+    item.source_photo_index !== null && item.source_photo_index >= 0 && item.source_photo_index < photos.length;
+  const heroDefaults = {
+    sourceIndex: hasValidSourceIndex ? item.source_photo_index! : 0,
+    boundingBox: hasValidSourceIndex ? item.bounding_box : null,
+  };
+
   return (
     <View style={styles.itemCard}>
       <Text style={styles.itemMeta}>
@@ -331,6 +415,13 @@ function ItemCard({
         Bester Verkaufszeitraum: {item.best_selling_period.period} – {item.best_selling_period.reasoning}
       </Text>
 
+      {item.platform_recommendation && (
+        <Text style={styles.platformHintText}>
+          💡 Eignet sich gut für {PLATFORM_RECOMMENDATION_LABELS[item.platform_recommendation.platform]}:{" "}
+          {item.platform_recommendation.reasoning}
+        </Text>
+      )}
+
       {item.possible_collector_value && (
         <CollectorValueBlock
           name={item.name}
@@ -346,6 +437,8 @@ function ItemCard({
         suggestedTitle={item.suggested_title}
         priceChfMax={item.estimated_price_chf_max}
         conditionGuess={item.condition_guess}
+        defaultSourceIndex={heroDefaults.sourceIndex}
+        defaultBoundingBox={heroDefaults.boundingBox}
       />
 
       {item.missing_photo_suggestions.length > 0 && (
@@ -496,24 +589,42 @@ function HeroImageBlock({
   suggestedTitle,
   priceChfMax,
   conditionGuess,
+  defaultSourceIndex = 0,
+  defaultBoundingBox = null,
 }: {
   photos: ImagePicker.ImagePickerAsset[];
   suggestedTitle: string;
   priceChfMax: number;
-  conditionGuess: string;
+  conditionGuess?: string;
+  defaultSourceIndex?: number;
+  defaultBoundingBox?: BoundingBox | null;
 }) {
-  const [sourceIndex, setSourceIndex] = useState(0);
+  const [sourceIndex, setSourceIndex] = useState(defaultSourceIndex);
+  // Die Box gilt nur für das KI-vorgeschlagene Foto (defaultSourceIndex).
+  // Wählt der Nutzer manuell ein anderes Foto über den Thumbnail-Picker,
+  // ist die Box dafür nicht mehr gültig -> auf "kein Crop" zurücksetzen,
+  // statt die alte Box auf das falsche Foto anzuwenden.
+  const [boundingBox, setBoundingBox] = useState<BoundingBox | null>(defaultBoundingBox);
+
+  const handleManualSourceSelect = (i: number) => {
+    setSourceIndex(i);
+    setBoundingBox(null);
+  };
 
   const composingMutation = useMutation({
-    mutationFn: () => composeHeroImage(photos[sourceIndex]),
+    mutationFn: () => composeHeroImage(photos[sourceIndex], boundingBox),
   });
   const marketingMutation = useMutation({
     mutationFn: () =>
-      composeMarketingHeroImage(photos[sourceIndex], {
-        title: suggestedTitle,
-        price_chf: Math.round(priceChfMax),
-        condition_guess: conditionGuess,
-      }),
+      composeMarketingHeroImage(
+        photos[sourceIndex],
+        {
+          title: suggestedTitle,
+          price_chf: Math.round(priceChfMax),
+          condition_guess: conditionGuess,
+        },
+        boundingBox
+      ),
   });
 
   const composingErrorMessage =
@@ -538,7 +649,7 @@ function HeroImageBlock({
       {photos.length > 1 && (
         <View style={styles.heroSourceRow}>
           {photos.map((photo, i) => (
-            <Pressable key={photo.assetId ?? photo.uri ?? i} onPress={() => setSourceIndex(i)}>
+            <Pressable key={photo.assetId ?? photo.uri ?? i} onPress={() => handleManualSourceSelect(i)}>
               <Image
                 source={{ uri: photo.uri }}
                 style={[styles.heroSourceThumb, i === sourceIndex && styles.heroSourceThumbSelected]}
@@ -602,12 +713,24 @@ function HeroImageBlock({
   );
 }
 
+// Absichtlich ein minimaler struktureller Typ statt AnalyzedItem: dieser
+// Block liest nur diese 5 Felder (siehe draftMutation unten) und soll auch
+// von einem synthetisierten Bundle-Objekt (kein echtes AnalyzedItem)
+// verwendet werden können.
+type EbayDraftItemInput = {
+  suggested_title: string;
+  suggested_description: string;
+  estimated_price_chf_max: number;
+  category: string;
+  condition_guess?: string;
+};
+
 function EbayDraftBlock({
   item,
   photos,
   isLoggedIn,
 }: {
-  item: AnalyzedItem;
+  item: EbayDraftItemInput;
   photos: ImagePicker.ImagePickerAsset[];
   isLoggedIn: boolean;
 }) {
@@ -803,6 +926,7 @@ const styles = StyleSheet.create({
   priceBadgeText: { color: ACCENT, fontSize: 18, fontWeight: "700" },
   badgeText: { color: TEXT, fontSize: 13, fontWeight: "600" },
   seasonText: { color: MUTED, fontSize: 12, marginBottom: 10, lineHeight: 17 },
+  platformHintText: { color: TEAL, fontSize: 12, marginBottom: 10, lineHeight: 17 },
   collectorBox: { marginBottom: 12 },
   collectorButton: {
     borderWidth: 1,

@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { View, Text, Pressable, TextInput, KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
 import * as AppleAuthentication from "expo-apple-authentication";
-import { completeGoogleSignIn, completeAppleSignIn } from "../lib/auth";
+import { completeGoogleSignIn, completeAppleSignIn, registerWithEmail, loginWithEmail } from "../lib/auth";
 import { ACCENT, BG, CARD, TEXT, MUTED } from "../constants/theme";
 
 // Nötig, damit der Browser-Redirect nach dem Google-Login sauber zur App
@@ -15,6 +15,12 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState<"google" | "apple" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [appleAvailable, setAppleAvailable] = useState(false);
+
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [emailLoading, setEmailLoading] = useState(false);
 
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     clientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID,
@@ -67,8 +73,37 @@ export default function LoginScreen() {
     }
   };
 
+  const handleEmailSubmit = async () => {
+    setError(null);
+    const trimmedEmail = emailInput.trim();
+    if (!trimmedEmail || !trimmedEmail.includes("@")) {
+      setError("Bitte eine gültige E-Mail-Adresse eingeben.");
+      return;
+    }
+    if (passwordInput.length < (mode === "register" ? 8 : 1)) {
+      setError("Das Passwort muss mindestens 8 Zeichen haben.");
+      return;
+    }
+    setEmailLoading(true);
+    try {
+      if (mode === "register") {
+        await registerWithEmail(trimmedEmail, passwordInput, nameInput.trim() || undefined);
+      } else {
+        await loginWithEmail(trimmedEmail, passwordInput);
+      }
+      router.back();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Anmeldung fehlgeschlagen.");
+    } finally {
+      setEmailLoading(false);
+    }
+  };
+
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <View style={styles.content}>
         <Text style={styles.title}>Anmelden</Text>
         <Text style={styles.subtitle}>
@@ -105,13 +140,71 @@ export default function LoginScreen() {
           </Pressable>
         )}
 
+        <View style={styles.divider}>
+          <Text style={styles.dividerText}>oder</Text>
+        </View>
+
+        {mode === "register" && (
+          <TextInput
+            style={styles.input}
+            placeholder="Name (optional)"
+            placeholderTextColor={MUTED}
+            value={nameInput}
+            onChangeText={setNameInput}
+            autoCapitalize="words"
+          />
+        )}
+        <TextInput
+          style={styles.input}
+          placeholder="E-Mail"
+          placeholderTextColor={MUTED}
+          value={emailInput}
+          onChangeText={setEmailInput}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          textContentType="emailAddress"
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Passwort"
+          placeholderTextColor={MUTED}
+          value={passwordInput}
+          onChangeText={setPasswordInput}
+          secureTextEntry
+          textContentType={mode === "register" ? "newPassword" : "password"}
+        />
+
+        <Pressable
+          onPress={handleEmailSubmit}
+          disabled={loading !== null || emailLoading}
+          style={[styles.emailButton, (loading !== null || emailLoading) && styles.buttonDisabled]}
+        >
+          {emailLoading ? (
+            <ActivityIndicator color={BG} />
+          ) : (
+            <Text style={styles.emailButtonText}>{mode === "register" ? "Konto erstellen" : "Anmelden"}</Text>
+          )}
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            setMode(mode === "login" ? "register" : "login");
+            setError(null);
+          }}
+          style={styles.toggleButton}
+        >
+          <Text style={styles.toggleButtonText}>
+            {mode === "login" ? "Noch kein Konto? Registrieren" : "Bereits ein Konto? Anmelden"}
+          </Text>
+        </Pressable>
+
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         <Pressable onPress={() => router.back()} style={styles.guestButton}>
           <Text style={styles.guestButtonText}>Als Gast fortfahren</Text>
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -128,6 +221,30 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   googleButtonText: { color: BG, fontWeight: "700", fontSize: 15 },
+  divider: { flexDirection: "row", alignItems: "center", marginVertical: 16 },
+  dividerText: { color: MUTED, fontSize: 12, textAlign: "center", width: "100%" },
+  input: {
+    backgroundColor: CARD,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: MUTED,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    color: TEXT,
+    fontSize: 15,
+    marginBottom: 10,
+  },
+  emailButton: {
+    backgroundColor: ACCENT,
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: "center",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  emailButtonText: { color: BG, fontWeight: "700", fontSize: 15 },
+  toggleButton: { alignItems: "center", paddingVertical: 8 },
+  toggleButtonText: { color: ACCENT, fontSize: 13, fontWeight: "600" },
   appleButton: {
     backgroundColor: TEXT,
     borderRadius: 10,

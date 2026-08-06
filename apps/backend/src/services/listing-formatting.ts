@@ -10,12 +10,20 @@ const TITLE_MAX_LENGTH: Record<ListingPlatform, number> = {
   TUTTI: 65,
   RICARDO: 64,
   EBAY: 80,
+  VINTED: 60,
+  ANIBIS: 70,
+  FACEBOOK_MARKETPLACE: 100,
 };
 
 const PLATFORM_NOTES: Record<ListingPlatform, string[]> = {
   TUTTI: ["Tutti hat keine öffentliche Publish-API – Angaben hier manuell in die Tutti-App/-Website einfügen."],
   RICARDO: ["Ricardo hat keine öffentliche Publish-API – Angaben hier manuell in die Ricardo-App/-Website einfügen."],
   EBAY: ["eBay kann über die offizielle API angebunden werden (geplant für Phase 12) – bis dahin ebenfalls manuell einfügen."],
+  VINTED: ["Vinted hat keine öffentliche Publish-API – Angaben hier manuell in die Vinted-App/-Website einfügen."],
+  ANIBIS: ["Anibis hat keine öffentliche Publish-API – Angaben hier manuell in die Anibis-App/-Website einfügen."],
+  FACEBOOK_MARKETPLACE: [
+    "Facebook Marketplace hat keine öffentliche Publish-API – Angaben hier manuell in die Facebook-App/-Website einfügen.",
+  ],
 };
 
 function truncate(text: string, maxLength: number): string {
@@ -87,7 +95,34 @@ function buildFields(platform: ListingPlatform, item: ItemInput): ListingField[]
         { key: "price", label: "Sofort-Kaufen-Preis", value: `${price} ${priceContext}` },
         categoryField,
       ];
+    case "VINTED":
+      return [
+        ...titleAndDescription,
+        { key: "condition", label: "Zustand", value: mapToStructuredCondition(item.condition_guess) },
+        { key: "price", label: "Preis", value: `${price} ${priceContext}` },
+        categoryField,
+      ];
+    case "ANIBIS":
+      return [
+        ...titleAndDescription,
+        { key: "price", label: "Preis", value: `${price} ${priceContext}` },
+        { key: "condition", label: "Zustand", value: item.condition_guess ?? "unbekannt" },
+        categoryField,
+      ];
+    case "FACEBOOK_MARKETPLACE":
+      return [
+        ...titleAndDescription,
+        { key: "price", label: "Preis", value: `${price} ${priceContext}` },
+        { key: "condition", label: "Zustand", value: item.condition_guess ?? "unbekannt" },
+        categoryField,
+      ];
+    default:
+      return assertNever(platform);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unbekannte Plattform in buildFields: ${JSON.stringify(value)}`);
 }
 
 function buildFullText(fields: ListingField[]): string {

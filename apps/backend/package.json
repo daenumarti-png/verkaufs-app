@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist/functions-entry.js",
+  "engines": {
+    "node": "20"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
@@ -22,16 +26,20 @@
     "@prisma/client": "^5.19.1",
     "@supabase/supabase-js": "^2.110.9",
     "@verkaufs-app/shared": "*",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",
     "file-type": "^19.5.0",
+    "firebase-functions": "^6.6.0",
     "google-auth-library": "^10.9.1",
     "heic-convert": "^2.1.0",
     "jose": "^6.2.4",
     "sharp": "^0.33.5",
+    "stripe": "^22.4.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.15",
     "prisma": "^5.19.1",
     "tsx": "^4.19.0",

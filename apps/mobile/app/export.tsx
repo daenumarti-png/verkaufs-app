@@ -5,22 +5,32 @@ import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import type { ListingPlatform, PlatformListing } from "@verkaufs-app/shared";
 import { prepareListings, ApiRequestError } from "../lib/api";
-import { consumeExportItem } from "../lib/export-store";
+import { consumeExportItem, consumeRecommendedPlatform } from "../lib/export-store";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED } from "../constants/theme";
 
 const PLATFORM_LABELS: Record<ListingPlatform, string> = {
   TUTTI: "Tutti",
   RICARDO: "Ricardo",
   EBAY: "eBay",
+  VINTED: "Vinted",
+  ANIBIS: "Anibis",
+  FACEBOOK_MARKETPLACE: "Facebook Marketplace",
 };
 
-const PLATFORMS: ListingPlatform[] = ["TUTTI", "RICARDO", "EBAY"];
+const BASE_PLATFORMS: ListingPlatform[] = ["TUTTI", "RICARDO", "EBAY"];
 
 export default function ExportScreen() {
   // Wird beim ersten Rendern konsumiert (Modul-Singleton, siehe
   // lib/export-store.ts) – daher in einem Ref statt bei jedem Render neu lesen.
   const itemRef = useRef(consumeExportItem());
   const item = itemRef.current;
+  // Nur relevant, wenn die KI für diesen Artikel eine zusätzliche Plattform
+  // (Vinted/Anibis/Facebook Marketplace) empfohlen hat - siehe lib/export-store.ts.
+  const recommendedPlatformRef = useRef(consumeRecommendedPlatform());
+  const recommendedPlatform = recommendedPlatformRef.current;
+  const platforms = recommendedPlatform && !BASE_PLATFORMS.includes(recommendedPlatform)
+    ? [...BASE_PLATFORMS, recommendedPlatform]
+    : BASE_PLATFORMS;
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const copiedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -33,7 +43,7 @@ export default function ExportScreen() {
 
   const { data, isPending, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["prepare-listings", item?.name],
-    queryFn: () => prepareListings({ item: item!, platforms: PLATFORMS }),
+    queryFn: () => prepareListings({ item: item!, platforms }),
     enabled: item !== null,
   });
 
@@ -66,7 +76,7 @@ export default function ExportScreen() {
       <View style={styles.content}>
         <Text style={styles.kicker}>Export</Text>
         <Text style={styles.title}>{item.suggested_title}</Text>
-        <Text style={styles.subtitle}>Kopierfertige Angaben für Tutti, Ricardo und eBay.</Text>
+        <Text style={styles.subtitle}>Kopierfertige Angaben für die passenden Plattformen.</Text>
 
         {isPending && (
           <View style={styles.loadingBox}>
@@ -85,7 +95,13 @@ export default function ExportScreen() {
         )}
 
         {data?.listings.map((listing) => (
-          <PlatformSection key={listing.platform} listing={listing} copiedKey={copiedKey} onCopy={handleCopy} />
+          <PlatformSection
+            key={listing.platform}
+            listing={listing}
+            copiedKey={copiedKey}
+            onCopy={handleCopy}
+            isRecommended={listing.platform === recommendedPlatform}
+          />
         ))}
 
         <Pressable onPress={() => router.back()} style={styles.backButton}>
@@ -100,16 +116,25 @@ function PlatformSection({
   listing,
   copiedKey,
   onCopy,
+  isRecommended,
 }: {
   listing: PlatformListing;
   copiedKey: string | null;
   onCopy: (key: string, value: string) => void;
+  isRecommended: boolean;
 }) {
   const fullTextKey = `${listing.platform}:full`;
   return (
     <View style={styles.platformCard}>
       <View style={styles.platformHeader}>
-        <Text style={styles.platformTitle}>{PLATFORM_LABELS[listing.platform]}</Text>
+        <View style={styles.platformTitleRow}>
+          <Text style={styles.platformTitle}>{PLATFORM_LABELS[listing.platform]}</Text>
+          {isRecommended && (
+            <View style={styles.recommendedBadge}>
+              <Text style={styles.recommendedBadgeText}>Empfohlen</Text>
+            </View>
+          )}
+        </View>
         <Pressable onPress={() => onCopy(fullTextKey, listing.full_text)} style={styles.copyAllButton}>
           <Text style={styles.copyAllButtonText}>{copiedKey === fullTextKey ? "Kopiert ✓" : "Alles kopieren"}</Text>
         </Pressable>
@@ -145,7 +170,7 @@ function PlatformSection({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: BG, alignItems: "center" },
+  screen: { flex: 1, backgroundColor: BG },
   scrollContent: { flexGrow: 1, alignItems: "center" },
   content: { maxWidth: 480, width: "100%", padding: 16, paddingBottom: 48 },
   kicker: { color: MUTED, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase" },
@@ -172,7 +197,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 12,
   },
+  platformTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   platformTitle: { color: TEXT, fontSize: 17, fontWeight: "700" },
+  recommendedBadge: {
+    backgroundColor: "rgba(45,138,130,0.18)",
+    borderRadius: 6,
+    paddingVertical: 2,
+    paddingHorizontal: 7,
+  },
+  recommendedBadgeText: { color: TEAL, fontSize: 10.5, fontWeight: "700", textTransform: "uppercase" },
   copyAllButton: {
     backgroundColor: ACCENT,
     borderRadius: 8,

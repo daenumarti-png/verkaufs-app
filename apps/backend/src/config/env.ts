@@ -1,5 +1,15 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { z } from "zod";
+
+// .env.local statt .env: Firebase Functions lädt beim Deploy automatisch
+// jede ".env"/".env.<project-id>"-Datei aus dem Funktions-Quellordner und
+// versucht deren Werte als normale (nicht-geheime) Umgebungsvariablen zu
+// setzen - das kollidiert mit den echten Secrets, die für dieselben Namen
+// bereits über den Secret Manager gesetzt sind ("overlaps non secret
+// environment variable"). ".env.local" wird von Firebase laut eigener
+// Doku bewusst NIE deployt/gelesen, ist aber für die lokale Entwicklung
+// (dieser Import hier) weiterhin die einzige benötigte Quelle.
+dotenv.config({ path: ".env.local" });
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL fehlt"),
@@ -58,6 +68,29 @@ const envSchema = z.object({
   // Eigenes, intern generiertes Secret (kein externer API-Key) zur
   // AES-256-GCM-Verschlüsselung des eBay-Refresh-Tokens vor Ablage in der DB.
   EBAY_TOKEN_ENCRYPTION_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+
+  // Phase-Abrechnung – Stripe. Alle optional, da der Server auch ohne
+  // konfiguriertes Billing starten soll (Endpunkte antworten dann mit
+  // 503, siehe services/stripe.ts isStripeConfigured()).
+  STRIPE_SECRET_KEY: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  // Signatur-Secret des Stripe-Webhook-Endpoints (aus dem Stripe-Dashboard
+  // bzw. `stripe listen` bei lokalem Testen) – zur Verifikation eingehender
+  // Webhook-Events, damit niemand ungeprüft Abo-Status vortäuschen kann.
+  STRIPE_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  STRIPE_PRICE_ID_BASIC: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  STRIPE_PRICE_ID_PRO: z
     .string()
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),

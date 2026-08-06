@@ -36,6 +36,18 @@ export async function completeAppleSignIn(identityToken: string, name?: string):
   return auth.user;
 }
 
+export async function registerWithEmail(email: string, password: string, name?: string): Promise<AuthUser> {
+  const auth = await postAuth("/auth/register", { email, password, name });
+  await persistSession(auth);
+  return auth.user;
+}
+
+export async function loginWithEmail(email: string, password: string): Promise<AuthUser> {
+  const auth = await postAuth("/auth/login", { email, password });
+  await persistSession(auth);
+  return auth.user;
+}
+
 export async function signOut(): Promise<void> {
   await deleteItem(AUTH_TOKEN_KEY);
   await deleteItem(AUTH_USER_KEY);

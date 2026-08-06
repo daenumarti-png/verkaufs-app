@@ -20,7 +20,12 @@
 //   (Cron), der erst beim echten Deployment sinnvoll aufgesetzt werden kann.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" für lokale Entwicklung (Windows); "debian-openssl-3.0.x" für
+  // den Firebase-Cloud-Functions-Deploy (Linux/Debian-Laufzeit) – ohne das
+  // wird beim Deploy nur die Windows-Engine mitgeliefert und die Funktion
+  // kann die Datenbank nicht erreichen.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -31,6 +36,7 @@ datasource db {
 enum AuthProvider {
   GOOGLE
   APPLE
+  EMAIL
 }
 
 enum ItemStatus {
@@ -47,7 +53,19 @@ enum Platform {
   OTHER
 }
 
-// Nur registrierte Nutzer (Google/Apple-Login) landen hier.
+enum SubscriptionTier {
+  BASIC
+  PRO
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+// Nur registrierte Nutzer (Google/Apple/E-Mail-Login) landen hier.
 // Gastnutzung (siehe Briefing Abschnitt 6) läuft ohne Account und wird
 // clientseitig/lokal gehalten, nicht in dieser Tabelle.
 model User {
@@ -56,12 +74,17 @@ model User {
   name           String?
   authProvider   AuthProvider
   authProviderId String
+  // Nur bei authProvider=EMAIL gesetzt (bcrypt-Hash, siehe lib/password.ts).
+  // Nullable, da GOOGLE/APPLE-Nutzer nie ein eigenes Passwort haben.
+  passwordHash   String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   items          Item[]
   saleHistory    SaleHistory[]
   ebayConnection EbayConnection?
+  subscription   Subscription?
+  usageRecords   UsageRecord[]
 
   @@unique([authProvider, authProviderId])
 }
@@ -169,4 +192,39 @@ model EbayConnection {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Stripe-Abo pro Nutzer (analog zu EbayConnection: externe IDs + Status,
+// kein eigenes Preismodell in der DB — die Preis-/Kontingent-Werte pro
+// Tier leben in config/subscription.ts, damit sie an einer Stelle
+// änderbar sind, sobald echte Stripe-Price-IDs existieren).
+model Subscription {
+  id                   String             @id @default(uuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCustomerId     String             @unique
+  stripeSubscriptionId String?            @unique
+  tier                 SubscriptionTier
+  status               SubscriptionStatus
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Verbrauchszähler pro Nutzer und Abrechnungsperiode (analog zu
+// GuestUsage, aber periodenbezogen statt lebenslang – @@unique statt
+// @@id, da (userId, periodStart) den Schlüssel bildet).
+model UsageRecord {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  periodStart  DateTime
+  analysesUsed Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, periodStart])
 }

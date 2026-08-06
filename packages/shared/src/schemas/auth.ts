@@ -12,6 +12,23 @@ export const appleAuthRequestSchema = z.object({
   name: z.string().max(120).optional(),
 });
 
+// E-Mail/Passwort-Registrierung. Passwort-Mindestlänge 8 Zeichen, Obergrenze
+// 128 (bcrypt kappt ohnehin bei 72 Bytes, aber eine saubere Validierungs-
+// Fehlermeldung ist besser als sich stillschweigend darauf zu verlassen).
+export const emailRegisterRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(8).max(128),
+  name: z.string().max(120).optional(),
+});
+
+// Beim Login bewusst NUR min(1) statt min(8): ein zu kurzes Passwort soll
+// über die generische "ungültige Anmeldedaten"-Antwort abgelehnt werden,
+// nicht über einen 400er, der die Passwort-Richtlinie verraten würde.
+export const emailLoginRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(1).max(128),
+});
+
 export const authUserSchema = z.object({
   id: z.string(),
   email: z.string(),
@@ -25,5 +42,7 @@ export const authResponseSchema = z.object({
 
 export type GoogleAuthRequest = z.infer<typeof googleAuthRequestSchema>;
 export type AppleAuthRequest = z.infer<typeof appleAuthRequestSchema>;
+export type EmailRegisterRequest = z.infer<typeof emailRegisterRequestSchema>;
+export type EmailLoginRequest = z.infer<typeof emailLoginRequestSchema>;
 export type AuthUser = z.infer<typeof authUserSchema>;
 export type AuthResponse = z.infer<typeof authResponseSchema>;

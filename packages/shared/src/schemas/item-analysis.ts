@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { listingPlatformSchema } from "./listing-export.js";
 
 // Eine Rückfrage bei Preisunsicherheit, wenn Fotos allein nicht reichen
 // (Briefing Abschnitt 4). Antworten sind bewusst kurze Optionen statt
@@ -16,6 +17,31 @@ export const clarifyingQuestionSchema = z.object({
 export const bestSellingPeriodSchema = z.object({
   period: z.string().min(1).max(60),
   reasoning: z.string().min(1).max(150),
+});
+
+// Bruchteile (0.0-1.0) relativ zu Breite/Höhe des EINEN Fotos, auf dem der
+// Artikel laut Modell zu sehen ist (source_photo_index) - NICHT relativ zum
+// gesamten Analyse-Aufruf. Bewusst ohne .min(0).max(1)-Constraint: das Modell
+// kann leicht daneben liegen oder halluzinieren, und ein hartes Schema-Reject
+// hier würde die GESAMTE Artikel-Analyse scheitern lassen wegen eines rein
+// kosmetischen Felds. Plausibilitätsprüfung/Clamping passiert erst downstream
+// beim Crop (hero-image-composing.ts), nicht hier.
+export const boundingBoxSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
+
+// Phase Plattform-Empfehlung: nur befüllt, wenn EINE Plattform aus
+// listingPlatformSchema für DIESEN Artikel klar besser geeignet ist als
+// der Standard-Dreier (Tutti/Ricardo/eBay) - z.B. Vinted für Kleidung.
+// Nutzt bewusst dasselbe Enum wie der Export-Feature (listing-export.ts),
+// damit KI-Empfehlung und tatsächlich unterstützte Plattformen nie
+// auseinanderlaufen können.
+export const platformRecommendationSchema = z.object({
+  platform: listingPlatformSchema,
+  reasoning: z.string(),
 });
 
 /**
@@ -47,6 +73,17 @@ export const analyzedItemSchema = z.object({
   // anzubieten (separater, kostenpflichtiger Analyseschritt mit Live-Suche,
   // siehe Briefing Abschnitt 5, nicht bei jedem Alltagsartikel pauschal).
   possible_collector_value: z.boolean(),
+  // Phase 4b: welches der hochgeladenen Fotos (0-indexiert, exakt in der
+  // Reihenfolge des API-Aufrufs) diesen EINEN Artikel am klarsten zeigt,
+  // plus eine enge Bounding Box darauf - fürs Freistellen des Titelfotos,
+  // damit bei mehreren Artikeln auf einem Gruppenfoto nicht jedes Titelfoto
+  // das ganze Gruppenfoto zeigt. Nullable + default(null): Modell liefert das
+  // evtl. nicht oder unplausibel -> Fallback ist "kein Wert", was
+  // hero-image-composing.ts als "kein Crop, ganzes Foto wie bisher"
+  // interpretiert (fail-safe).
+  source_photo_index: z.number().int().nullable().default(null),
+  bounding_box: boundingBoxSchema.nullable().default(null),
+  platform_recommendation: platformRecommendationSchema.nullable().default(null),
 });
 
 export const bundleRecommendationSchema = z
@@ -54,12 +91,32 @@ export const bundleRecommendationSchema = z
     recommended: z.boolean(),
     reasoning: z.string(),
     bundle_price_chf: z.number().nonnegative().nullable(),
+    // Phase 4b: analog zu bundle_price_chf - nur befüllt, wenn recommended=true.
+    // Ohne diese Felder liesse sich das Bundle nicht als eigenes, vollwertiges
+    // Inserat exportieren (Export-/eBay-Draft-Pipeline braucht suggested_title/
+    // suggested_description/category als flache Pflichtfelder).
+    suggested_title: z.string().max(80).nullable().default(null),
+    suggested_description: z.string().nullable().default(null),
+    category: z.string().nullable().default(null),
   })
-  // Geschäftsregel: eine Bundle-Empfehlung ohne Preis ist nicht verwertbar.
-  // Erzwingt Konsistenz statt einer stillschweigend unvollständigen Antwort.
+  // Geschäftsregel: eine Bundle-Empfehlung ohne Preis/Titel/Beschreibung/
+  // Kategorie ist nicht verwertbar. Erzwingt Konsistenz statt einer
+  // stillschweigend unvollständigen Antwort.
   .refine((val) => !val.recommended || val.bundle_price_chf !== null, {
     message: "bundle_price_chf darf nicht null sein, wenn recommended=true",
     path: ["bundle_price_chf"],
+  })
+  .refine((val) => !val.recommended || (val.suggested_title?.trim().length ?? 0) > 0, {
+    message: "suggested_title darf nicht leer sein, wenn recommended=true",
+    path: ["suggested_title"],
+  })
+  .refine((val) => !val.recommended || (val.suggested_description?.trim().length ?? 0) > 0, {
+    message: "suggested_description darf nicht leer sein, wenn recommended=true",
+    path: ["suggested_description"],
+  })
+  .refine((val) => !val.recommended || (val.category?.trim().length ?? 0) > 0, {
+    message: "category darf nicht leer sein, wenn recommended=true",
+    path: ["category"],
   });
 
 export const itemAnalysisResultSchema = z.object({
@@ -75,6 +132,8 @@ export const itemAnalysisResultSchema = z.object({
 
 export type ClarifyingQuestion = z.infer<typeof clarifyingQuestionSchema>;
 export type BestSellingPeriod = z.infer<typeof bestSellingPeriodSchema>;
+export type BoundingBox = z.infer<typeof boundingBoxSchema>;
+export type PlatformRecommendation = z.infer<typeof platformRecommendationSchema>;
 export type AnalyzedItem = z.infer<typeof analyzedItemSchema>;
 export type BundleRecommendation = z.infer<typeof bundleRecommendationSchema>;
 export type ItemAnalysisResult = z.infer<typeof itemAnalysisResultSchema>;

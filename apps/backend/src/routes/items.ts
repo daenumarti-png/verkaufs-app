@@ -24,6 +24,7 @@ import { prepareListings } from "../services/listing-formatting.js";
 import { moderatePhotos } from "../services/content-moderation.js";
 import { resolveAuthContext } from "../lib/auth-context.js";
 import { getRemainingGuestQuota, recordGuestItemsAnalyzed } from "../services/guest-usage.js";
+import { getRemainingQuota, recordAnalysisUsage } from "../services/billing-usage.js";
 import { MAX_GUEST_ITEMS, GUEST_DEVICE_ID_HEADER } from "../config/guest.js";
 import { EXPENSIVE_ENDPOINT_RATE_LIMIT } from "../config/rate-limit.js";
 
@@ -39,9 +40,14 @@ export async function itemRoutes(app: FastifyInstance) {
         .send(errorReply("service_unavailable", "Foto-Analyse ist aktuell nicht konfiguriert (kein API-Key hinterlegt)."));
     }
 
-    // Phase 10: eingeloggte Nutzer sind unlimitiert, Gäste brauchen eine
-    // Geräte-ID und sind auf MAX_GUEST_ITEMS erkannte Artikel begrenzt
-    // (serverseitig durchgesetzt, siehe Briefing Abschnitt 1/6).
+    // Phase 10: Gäste brauchen eine Geräte-ID und sind auf MAX_GUEST_ITEMS
+    // erkannte Artikel begrenzt (serverseitig durchgesetzt, siehe Briefing
+    // Abschnitt 1/6). Eingeloggte Nutzer brauchen ein aktives Abo (Phase
+    // Abrechnung): mit Abo ist auch Verbrauch über das Kontingent hinaus
+    // erlaubt (wird automatisch als Zusatzposition auf die nächste Stripe-
+    // Rechnung gebucht, siehe routes/billing.ts) – ohne Abo gäbe es aber
+    // niemanden, dem eine Zusatzrechnung gestellt werden könnte, daher wie
+    // ein Gast ohne Kontingent behandelt.
     const authContext = await resolveAuthContext(req);
     if (authContext.type === "invalid_token") {
       return reply.status(401).send(errorReply("invalid_token", "Sitzung ungültig oder abgelaufen. Bitte erneut anmelden."));
@@ -66,6 +72,19 @@ export async function itemRoutes(app: FastifyInstance) {
           )
         );
       }
+    }
+    if (authContext.type === "user") {
+      const quota = await getRemainingQuota(authContext.userId);
+      if (!quota.hasSubscription) {
+        return reply.status(403).send(
+          errorReply(
+            "subscription_required",
+            "Für diesen Account ist noch kein Abo aktiv. Bitte ein Abo abschliessen, um Artikel zu analysieren."
+          )
+        );
+      }
+      // Kontingent aufgebraucht ist bewusst KEIN Blocker – Overage ist
+      // erlaubt und wird automatisch nachberechnet (siehe Kommentar oben).
     }
 
     let parts;
@@ -199,6 +218,9 @@ export async function itemRoutes(app: FastifyInstance) {
 
     if (authContext.type === "guest") {
       await recordGuestItemsAnalyzed(authContext.deviceId, outcome.result.items.length);
+    }
+    if (authContext.type === "user") {
+      await recordAnalysisUsage(authContext.userId);
     }
 
     const responseBody: AnalyzeItemsResponse = {

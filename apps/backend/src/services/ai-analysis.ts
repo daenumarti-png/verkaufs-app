@@ -21,15 +21,19 @@ function buildPrompt(photoCount: number): string {
   return `Du bist ein Experte für den Verkauf gebrauchter Gegenstände auf Schweizer Occasion-Plattformen (Tutti.ch, Ricardo.ch) und eBay.
 Dir werden ${photoCount} Foto(s) desselben Verkaufsvorgangs gezeigt. Diese Fotos können entweder verschiedene, unterschiedliche Artikel zeigen (z.B. mehrere Videospiele nebeneinander), ODER denselben Artikel/dieselbe Artikelgruppe aus mehreren Blickwinkeln bzw. als Nahaufnahme (z.B. ein Gruppenfoto plus Einzel-Nahaufnahmen derselben Gegenstände). Erkenne zuerst, ob es sich um dieselben Objekte auf mehreren Fotos handelt, und führe diese dann zu EINEM Eintrag pro echtem, unterschiedlichem Artikel zusammen – zähle keinen Artikel doppelt, nur weil er auf mehreren Fotos zu sehen ist. Nutze Nahaufnahmen nur, um Zustand/Details eines bereits erkannten Artikels genauer einzuschätzen.
 
+Foto-Index & Bounding Box pro Artikel (source_photo_index, bounding_box): Die dir übergebenen Fotos sind in der Reihenfolge, in der du sie in diesem Aufruf erhältst, 0-indexiert (erstes Foto = Index 0, zweites Foto = Index 1, usw. – exakt diese Reihenfolge, keine eigene Neusortierung). Gib für JEDEN Artikel in "source_photo_index" das Foto (per Index) an, auf dem GENAU DIESER EINE Artikel am klarsten, vollständigsten und am wenigsten von anderen Objekten verdeckt zu sehen ist. Falls du denselben Artikel gemäss der Zusammenführungs-Regel oben auf mehreren Fotos erkannt hast, wähle NUR das eine klarste Foto als Referenz – versuche NICHT, mehrere Fotos oder Bounding Boxes für denselben Artikel zu kombinieren. Gib zusätzlich in "bounding_box" ein möglichst eng um GENAU DIESEN Artikel gezogenes Rechteck an (andere Artikel und Hintergrund sollen möglichst ausserhalb der Box liegen), als Bruchteil (0.0–1.0) der Breite/Höhe DIESES EINEN Fotos: "x"/"y" = linke obere Ecke, "width"/"height" = Breite/Höhe der Box. Falls du unsicher bist oder ein Foto ohnehin nur genau diesen einen Artikel zeigt, setze "bounding_box" auf null statt zu raten.
+
 Maximal ${MAX_ITEMS} unterschiedliche Artikel im Ergebnis. Falls mehr echte, unterschiedliche Artikel erkennbar sind, wähle die ${MAX_ITEMS} eindeutigsten aus und setze "additional_items_likely" auf true, damit der Nutzer die restlichen Artikel in einem weiteren Durchgang separat fotografieren kann. Setze "additional_items_likely" nur dann auf true, wenn du wirklich den Eindruck hast, dass mehr als ${MAX_ITEMS} unterschiedliche Artikel vorhanden sind – nicht vorsorglich.
 
-Bundle- vs. Einzelverkauf-Empfehlung: Empfehle ein Bundle nur, wenn die Artikel wirklich zusammenpassen (z.B. gleiche Kategorie/Sammlung, gleiche wahrscheinliche Käuferschaft, z.B. mehrere Switch-Spiele oder ein Möbel-Set) UND ein gemeinsamer Verkauf für Käufer wie Verkäufer plausibel attraktiver ist als Einzelverkäufe. Bei unterschiedlichen/unzusammenhängenden Artikeln (z.B. eine Lampe und ein Fahrrad) empfiehl Einzelverkauf. "bundle_price_chf" sollte, falls ein Bundle empfohlen wird, plausibel unter der Summe der einzelnen "estimated_price_chf_max"-Werte liegen (Mengenrabatt-Anreiz), aber nicht unrealistisch niedrig.
+Bundle- vs. Einzelverkauf-Empfehlung: Empfehle ein Bundle nur, wenn die Artikel wirklich zusammenpassen (z.B. gleiche Kategorie/Sammlung, gleiche wahrscheinliche Käuferschaft, z.B. mehrere Switch-Spiele oder ein Möbel-Set) UND ein gemeinsamer Verkauf für Käufer wie Verkäufer plausibel attraktiver ist als Einzelverkäufe. Bei unterschiedlichen/unzusammenhängenden Artikeln (z.B. eine Lampe und ein Fahrrad) empfiehl Einzelverkauf. "bundle_price_chf" sollte, falls ein Bundle empfohlen wird, plausibel unter der Summe der einzelnen "estimated_price_chf_max"-Werte liegen (Mengenrabatt-Anreiz), aber nicht unrealistisch niedrig. Falls recommended=true, formuliere zusätzlich einen eigenen, verkaufsfertigen "suggested_title" (max 80 Zeichen) und "suggested_description" (Verkaufstext, max 40 Wörter) für das GESAMTE Bundle – nicht einfach die Einzeltitel aneinanderreihen, sondern holistisch als EIN Angebot formulieren (z.B. "2x Nintendo Switch Spiele im Set" statt "Spiel A + Spiel B") – sowie eine passende gemeinsame "category". Falls recommended=false, setze diese drei Felder auf null.
 
 Rückfragen (clarifying_questions): Nur befüllen, wenn Fotos allein wirklich NICHT für eine belastbare Preisschätzung ausreichen, weil eine preisrelevante Eigenschaft nicht sichtbar ist – typische Fälle: bei Möbeln fehlende Masse/Ausstattungsvariante; bei Elektronik unklare Speichergrösse oder ob Zubehör vollständig ist; bei Kleidung unklare Grösse. NICHT bei jedem Artikel pauschal nachfragen – wenn die Fotos für eine vernünftige Schätzung reichen, "clarifying_questions" als leeres Array lassen. Maximal 2 Fragen pro Artikel, jede mit 2-4 kurzen Antwortoptionen (max. 30 Zeichen pro Option, geeignet für antippbare Chips, kein Freitext).
 
 Idealer Verkaufszeitpunkt (best_selling_period): Schätze anhand saisonaler/kategoriebedingter Nachfrage, wann der Verkauf gestartet werden sollte, z.B. Sonnenschirm/Grill/Gartenmöbel eher "März–August" (Frühling/Sommer), Wintersportartikel eher "September–Januar". "period" als kurze Monatsspanne (z.B. "März–August") oder bei Artikeln ohne saisonalen Bezug (z.B. Elektronik, Möbel, Werkzeug) exakt "ganzjährig". "reasoning" kurz begründen (max 15 Wörter).
 
 Sammlerwert-Verdacht (possible_collector_value): Setze auf true NUR bei echtem visuellem Verdacht auf einen Sammlerwert über dem üblichen Gebrauchtwert – z.B. Lego-Set mit erkennbarer Set-Nummer/Originalverpackung, Briefmarken/Briefmarkenalben, Münzen, Vintage-Spielzeug in Originalverpackung, limitierte/nummerierte Editionen, alte Sammelkarten. NICHT bei gewöhnlichen Alltagsartikeln (Möbel, gängige Elektronik, normale Kleidung) – im Zweifel false, da dies einen separaten, aufwändigeren Rechercheschritt auslöst.
+
+Plattform-Empfehlung (platform_recommendation): Neben Tutti/Ricardo/eBay gibt es in der Schweiz weitere sinnvolle Verkaufsplattformen je nach Artikeltyp: Vinted (Kleidung/Mode/Accessoires), Facebook Marketplace (sperrige/lokale Artikel wie Möbel, wo Versand unpraktisch ist), Anibis (zweite grosse Schweizer Kleinanzeigen-Plattform, Alternative zu Tutti). Empfehle EINE dieser drei NUR, wenn sie für DIESEN Artikel klar besser geeignet ist als der Standard-Dreier – sonst "platform_recommendation" auf null setzen (nicht bei jedem Artikel pauschal empfehlen). Kurze Begründung (max 15 Wörter).
 
 Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt, ohne Erklärtext, ohne Markdown-Codeblock, exakt in diesem Schema:
 {
@@ -49,14 +53,20 @@ Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt, ohne Erklärtext, ohne M
         { "question": "kurze Frage, max 120 Zeichen", "options": ["Option 1", "Option 2"] }
       ],
       "best_selling_period": { "period": "z.B. März–August oder ganzjährig", "reasoning": "max 15 Wörter" },
-      "possible_collector_value": true oder false
+      "possible_collector_value": true oder false,
+      "source_photo_index": Zahl (0-indexiert, welches Foto diesen Artikel am klarsten zeigt) oder null,
+      "bounding_box": { "x": Zahl 0-1, "y": Zahl 0-1, "width": Zahl 0-1, "height": Zahl 0-1 } oder null,
+      "platform_recommendation": { "platform": "TUTTI"|"RICARDO"|"EBAY"|"VINTED"|"ANIBIS"|"FACEBOOK_MARKETPLACE", "reasoning": "max 15 Wörter" } oder null
     }
   ],
   "multi_item_detected": true oder false,
   "bundle_recommendation": {
     "recommended": true oder false,
     "reasoning": "max 15 Wörter",
-    "bundle_price_chf": Zahl (Pflicht, falls recommended=true) oder null
+    "bundle_price_chf": Zahl (Pflicht, falls recommended=true) oder null,
+    "suggested_title": "verkaufsfertiger Bundle-Titel, max 80 Zeichen (Pflicht, falls recommended=true)" oder null,
+    "suggested_description": "Verkaufstext für das gesamte Bundle, max 40 Wörter (Pflicht, falls recommended=true)" oder null,
+    "category": "gemeinsame Kategorie (Pflicht, falls recommended=true)" oder null
   } oder null, falls nur ein Artikel erkannt wurde,
   "additional_items_likely": true oder false
 }

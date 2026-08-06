@@ -1,0 +1,21 @@
+{
+  "functions": {
+    "source": "functions-deploy",
+    "runtime": "nodejs20",
+    "predeploy": [
+      "npm run build --workspace=packages/shared",
+      "npm run build --workspace=apps/backend",
+      "node scripts/stage-functions.mjs"
+    ]
+  },
+  "hosting": {
+    "public": "apps/mobile/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

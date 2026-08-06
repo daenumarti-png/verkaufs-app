@@ -7,6 +7,7 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+functions-deploy/
 
 # Env / Secrets
 .env
@@ -28,6 +29,10 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+.claude/settings.local.json
+
+# Firebase
+.firebase/
 
 # Expo / React Native
 ios/

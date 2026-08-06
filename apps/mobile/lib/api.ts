@@ -11,8 +11,12 @@ import type {
   CollectorValueResponse,
   HeroImageComposingResult,
   ComposeMarketingHeroImageFields,
+  BoundingBox,
   EbayDraftFields,
   EbayDraftResult,
+  SubscriptionTier,
+  BillingStatusResponse,
+  CheckoutUrlResponse,
 } from "@verkaufs-app/shared";
 import { getOrCreateGuestDeviceId } from "./guest-device-id";
 import { getItem } from "./storage";
@@ -78,9 +82,24 @@ export async function analyzeItems(photos: ImagePickerAsset[]): Promise<AnalyzeI
   return body as AnalyzeItemsResponse;
 }
 
-export async function composeHeroImage(photo: ImagePickerAsset): Promise<HeroImageComposingResult> {
+// Phase 4b: optionale Bounding Box, damit der Freisteller nur den einen
+// erkannten Artikel zeigt statt des ganzen Fotos (relevant bei mehreren
+// Artikeln auf einem Gruppenfoto). Ohne Box: bisheriges Verhalten (ganzes Foto).
+function appendBoundingBox(form: FormData, box: BoundingBox | null | undefined) {
+  if (!box) return;
+  form.append("bbox_x", String(box.x));
+  form.append("bbox_y", String(box.y));
+  form.append("bbox_width", String(box.width));
+  form.append("bbox_height", String(box.height));
+}
+
+export async function composeHeroImage(
+  photo: ImagePickerAsset,
+  boundingBox?: BoundingBox | null
+): Promise<HeroImageComposingResult> {
   const form = new FormData();
   await appendPhoto(form, photo, 0);
+  appendBoundingBox(form, boundingBox);
 
   const res = await fetch(`${API_BASE_URL}/items/hero-image/composing`, {
     method: "POST",
@@ -96,13 +115,15 @@ export async function composeHeroImage(photo: ImagePickerAsset): Promise<HeroIma
 
 export async function composeMarketingHeroImage(
   photo: ImagePickerAsset,
-  fields: ComposeMarketingHeroImageFields
+  fields: ComposeMarketingHeroImageFields,
+  boundingBox?: BoundingBox | null
 ): Promise<HeroImageComposingResult> {
   const form = new FormData();
   await appendPhoto(form, photo, 0);
   form.append("title", fields.title);
   form.append("price_chf", String(fields.price_chf));
   if (fields.condition_guess) form.append("condition_guess", fields.condition_guess);
+  appendBoundingBox(form, boundingBox);
 
   const res = await fetch(`${API_BASE_URL}/items/hero-image/marketing`, {
     method: "POST",
@@ -203,4 +224,26 @@ export async function refineEstimate(input: RefineEstimateRequest): Promise<Refi
     throw new ApiRequestError(res.status, body);
   }
   return body as RefineEstimateResponse;
+}
+
+export async function getBillingStatus(): Promise<BillingStatusResponse> {
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/billing/status`, { headers });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as BillingStatusResponse;
+}
+
+export async function getBillingCheckoutUrl(tier: SubscriptionTier): Promise<CheckoutUrlResponse> {
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/billing/checkout-url?tier=${tier}`, { headers });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as CheckoutUrlResponse;
 }

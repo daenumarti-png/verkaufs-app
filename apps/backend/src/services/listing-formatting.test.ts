@@ -55,6 +55,24 @@ describe("prepareListingForPlatform", () => {
     expect(title.value.length).toBe(80);
   });
 
+  it("kürzt den Titel für Vinted auf 60 Zeichen", () => {
+    const listing = prepareListingForPlatform("VINTED", baseItem);
+    const title = listing.fields.find((f) => f.key === "title")!;
+    expect(title.value.length).toBe(60);
+  });
+
+  it("kürzt den Titel für Anibis auf 70 Zeichen", () => {
+    const listing = prepareListingForPlatform("ANIBIS", baseItem);
+    const title = listing.fields.find((f) => f.key === "title")!;
+    expect(title.value.length).toBe(70);
+  });
+
+  it("kürzt den Titel für Facebook Marketplace auf 100 Zeichen", () => {
+    const listing = prepareListingForPlatform("FACEBOOK_MARKETPLACE", baseItem);
+    const title = listing.fields.find((f) => f.key === "title")!;
+    expect(title.value.length).toBe(100);
+  });
+
   it("lässt kurze Titel unverändert (keine unnötige Kürzung)", () => {
     const shortItem = { ...baseItem, suggested_title: "Kurzer Titel" };
     const listing = prepareListingForPlatform("TUTTI", shortItem);
@@ -62,11 +80,17 @@ describe("prepareListingForPlatform", () => {
     expect(title.value).toBe("Kurzer Titel");
   });
 
-  it("verwendet den strukturierten Zustand für Ricardo/eBay, Freitext für Tutti", () => {
+  it("verwendet den strukturierten Zustand für Ricardo/eBay/Vinted, Freitext für Tutti/Anibis/Facebook", () => {
     const tutti = prepareListingForPlatform("TUTTI", baseItem);
     const ricardo = prepareListingForPlatform("RICARDO", baseItem);
+    const vinted = prepareListingForPlatform("VINTED", baseItem);
+    const anibis = prepareListingForPlatform("ANIBIS", baseItem);
+    const facebook = prepareListingForPlatform("FACEBOOK_MARKETPLACE", baseItem);
     expect(tutti.fields.find((f) => f.key === "condition")!.value).toBe("sehr guter Zustand");
     expect(ricardo.fields.find((f) => f.key === "condition")!.value).toBe("Wie neu");
+    expect(vinted.fields.find((f) => f.key === "condition")!.value).toBe("Wie neu");
+    expect(anibis.fields.find((f) => f.key === "condition")!.value).toBe("sehr guter Zustand");
+    expect(facebook.fields.find((f) => f.key === "condition")!.value).toBe("sehr guter Zustand");
   });
 
   it("baut full_text aus allen Feldern zusammen", () => {

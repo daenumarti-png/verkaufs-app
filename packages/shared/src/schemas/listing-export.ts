@@ -5,7 +5,19 @@ import { z } from "zod";
 // manuell bestätigen"-Flow (Briefing Abschnitt 3 / "Nicht verhandelbare
 // Rahmenbedingungen"). OTHER aus dem Platform-Enum (Prisma) ist hier bewusst
 // nicht wählbar, da es keine bekannte Feldstruktur dafür gibt.
-export const listingPlatformSchema = z.enum(["TUTTI", "RICARDO", "EBAY"]);
+// VINTED/ANIBIS/FACEBOOK_MARKETPLACE ergänzt: strukturell alle mit dem
+// generischen Titel/Beschreibung/Preis/Kategorie-Format abbildbar (siehe
+// listing-formatting.ts). Stark spezialisierte Plattformen (Fahrzeuge,
+// Sammlerstücke) brauchen ein eigenes Feld-Modell und sind bewusst noch
+// nicht Teil dieses Enums.
+export const listingPlatformSchema = z.enum([
+  "TUTTI",
+  "RICARDO",
+  "EBAY",
+  "VINTED",
+  "ANIBIS",
+  "FACEBOOK_MARKETPLACE",
+]);
 
 export const prepareListingsRequestSchema = z.object({
   item: z.object({
