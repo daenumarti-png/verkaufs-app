@@ -9,6 +9,7 @@
     ]
   },
   "hosting": {
+    "predeploy": ["node scripts/patch-web-export-html.mjs"],
     "public": "apps/mobile/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
