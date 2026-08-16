@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, Image, StyleSheet, ActivityIndicator, Linking } from "react-native";
+import { View, Text, ScrollView, Pressable, Image, TextInput, StyleSheet, ActivityIndicator, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as Clipboard from "expo-clipboard";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
 import type {
@@ -18,6 +19,8 @@ import {
   researchCollectorValue,
   composeHeroImage,
   composeMarketingHeroImage,
+  getDetailedDescriptionQuestions,
+  generateDetailedDescription,
   getEbayStatus,
   createEbayDraft,
   ApiRequestError,
@@ -441,6 +444,14 @@ function ItemCard({
         defaultBoundingBox={heroDefaults.boundingBox}
       />
 
+      <DetailedDescriptionBlock
+        photo={photos[heroDefaults.sourceIndex]}
+        name={item.name}
+        category={item.category}
+        conditionGuess={item.condition_guess}
+        suggestedDescription={item.suggested_description}
+      />
+
       {item.missing_photo_suggestions.length > 0 && (
         <View style={styles.missingPhotos}>
           <Text style={styles.missingPhotosLabel}>Noch fotografieren:</Text>
@@ -713,6 +724,158 @@ function HeroImageBlock({
   );
 }
 
+// "Ausführliche Beschreibung" (Zusatzfeature, opt-in) – zweistufiger Flow:
+// zuerst Rückfragen laden (KI liest zusätzlich schon sichtbare Fakten aus
+// dem Foto), dann Antworten (optional, auch lückenhaft) eintippen und die
+// finale Beschreibung erstellen lassen. Bewusst ein separates Feld statt
+// die kurze suggested_description zu ersetzen oder zu verlängern.
+function DetailedDescriptionBlock({
+  photo,
+  name,
+  category,
+  conditionGuess,
+  suggestedDescription,
+}: {
+  photo: ImagePicker.ImagePickerAsset | undefined;
+  name: string;
+  category: string;
+  conditionGuess: string;
+  suggestedDescription: string;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [copied, setCopied] = useState(false);
+
+  const questionsMutation = useMutation({
+    mutationFn: () => {
+      if (!photo) throw new Error("Kein Foto verfügbar.");
+      return getDetailedDescriptionQuestions(photo, { name, category, condition_guess: conditionGuess });
+    },
+    onSuccess: () => setAnswers({}),
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: () => {
+      const questions = questionsMutation.data;
+      return generateDetailedDescription({
+        name,
+        category,
+        condition_guess: conditionGuess,
+        suggested_description: suggestedDescription,
+        visible_facts: questions?.visible_facts ?? [],
+        answers: (questions?.questions ?? [])
+          .map((q) => ({ question: q.question, answer: (answers[q.question] ?? "").trim() }))
+          .filter((a) => a.answer.length > 0),
+      });
+    },
+  });
+
+  const questionsErrorMessage =
+    questionsMutation.error instanceof ApiRequestError
+      ? questionsMutation.error.message
+      : questionsMutation.error
+        ? "Rückfragen konnten nicht geladen werden. Bitte nochmals versuchen."
+        : null;
+  const generateErrorMessage =
+    generateMutation.error instanceof ApiRequestError
+      ? generateMutation.error.message
+      : generateMutation.error
+        ? "Beschreibung konnte nicht erstellt werden. Bitte nochmals versuchen."
+        : null;
+
+  const handleCopy = async () => {
+    if (!generateMutation.data) return;
+    await Clipboard.setStringAsync(generateMutation.data.detailed_description);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+
+  if (!photo) return null;
+
+  if (generateMutation.data) {
+    return (
+      <View style={styles.detailBox}>
+        <Text style={styles.detailTitle}>Ausführliche Beschreibung</Text>
+        <Text style={styles.detailResultText}>{generateMutation.data.detailed_description}</Text>
+        <View style={styles.detailActionRow}>
+          <Pressable onPress={handleCopy}>
+            <Text style={styles.detailActionText}>{copied ? "Kopiert ✓" : "Kopieren"}</Text>
+          </Pressable>
+          <Pressable onPress={() => generateMutation.reset()}>
+            <Text style={styles.detailActionText}>Neu erstellen</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  if (questionsMutation.data) {
+    const { questions } = questionsMutation.data;
+    return (
+      <View style={styles.detailBox}>
+        <Text style={styles.detailTitle}>Ausführliche Beschreibung</Text>
+        {questions.length === 0 ? (
+          <Text style={styles.detailHintText}>
+            Keine zusätzlichen Angaben nötig – die Beschreibung wird aus dem Foto erstellt.
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.detailHintText}>
+              Optional beantworten, für eine ausführlichere Beschreibung (leer lassen = überspringen):
+            </Text>
+            {questions.map((q) => (
+              <View key={q.question} style={styles.detailQuestion}>
+                <Text style={styles.detailQuestionText}>{q.question}</Text>
+                <TextInput
+                  style={styles.detailInput}
+                  placeholder={q.placeholder ?? undefined}
+                  placeholderTextColor={MUTED}
+                  value={answers[q.question] ?? ""}
+                  onChangeText={(value) => setAnswers((prev) => ({ ...prev, [q.question]: value }))}
+                />
+              </View>
+            ))}
+          </>
+        )}
+        <Pressable
+          onPress={() => generateMutation.mutate()}
+          disabled={generateMutation.isPending}
+          style={[styles.collectorButton, generateMutation.isPending && styles.collectorButtonDisabled]}
+        >
+          {generateMutation.isPending ? (
+            <View style={styles.buttonRow}>
+              <ActivityIndicator color={ACCENT} />
+              <Text style={styles.collectorButtonText}>Erstelle Beschreibung …</Text>
+            </View>
+          ) : (
+            <Text style={styles.collectorButtonText}>Beschreibung erstellen</Text>
+          )}
+        </Pressable>
+        {generateErrorMessage && <Text style={styles.collectorErrorText}>{generateErrorMessage}</Text>}
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.detailBox}>
+      <Pressable
+        onPress={() => questionsMutation.mutate()}
+        disabled={questionsMutation.isPending}
+        style={[styles.collectorButton, questionsMutation.isPending && styles.collectorButtonDisabled]}
+      >
+        {questionsMutation.isPending ? (
+          <View style={styles.buttonRow}>
+            <ActivityIndicator color={ACCENT} />
+            <Text style={styles.collectorButtonText}>Lade Rückfragen …</Text>
+          </View>
+        ) : (
+          <Text style={styles.collectorButtonText}>Ausführliche Beschreibung erstellen</Text>
+        )}
+      </Pressable>
+      {questionsErrorMessage && <Text style={styles.collectorErrorText}>{questionsErrorMessage}</Text>}
+    </View>
+  );
+}
+
 // Absichtlich ein minimaler struktureller Typ statt AnalyzedItem: dieser
 // Block liest nur diese 5 Felder (siehe draftMutation unten) und soll auch
 // von einem synthetisierten Bundle-Objekt (kein echtes AnalyzedItem)
@@ -968,6 +1131,23 @@ const styles = StyleSheet.create({
   heroResult: { marginTop: 12, alignItems: "center" },
   heroResultImage: { width: "100%", aspectRatio: 1, borderRadius: 10, backgroundColor: BG },
   heroRegenerateText: { color: ACCENT, fontSize: 12, fontWeight: "600", marginTop: 8 },
+  detailBox: { marginBottom: 12 },
+  detailTitle: { color: TEXT, fontSize: 13.5, fontWeight: "700", marginBottom: 8 },
+  detailHintText: { color: MUTED, fontSize: 12, lineHeight: 17, marginBottom: 10 },
+  detailQuestion: { marginBottom: 10 },
+  detailQuestionText: { color: TEXT, fontSize: 12.5, fontWeight: "600", marginBottom: 5 },
+  detailInput: {
+    borderWidth: 1,
+    borderColor: MUTED,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    color: TEXT,
+    fontSize: 13,
+  },
+  detailResultText: { color: TEXT, fontSize: 13.5, lineHeight: 20, marginBottom: 10 },
+  detailActionRow: { flexDirection: "row", gap: 18 },
+  detailActionText: { color: ACCENT, fontSize: 12.5, fontWeight: "700" },
   missingPhotos: { marginBottom: 12 },
   missingPhotosLabel: { color: MUTED, fontSize: 11.5, marginBottom: 4 },
   missingPhotoItem: { color: TEXT, fontSize: 12.5, lineHeight: 18 },

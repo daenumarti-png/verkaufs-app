@@ -9,6 +9,7 @@ import { GLOBAL_RATE_LIMIT } from "./config/rate-limit.js";
 import { healthRoutes } from "./routes/health.js";
 import { itemRoutes } from "./routes/items.js";
 import { heroImageRoutes } from "./routes/hero-image.js";
+import { detailedDescriptionRoutes } from "./routes/detailed-description.js";
 import { authRoutes } from "./routes/auth.js";
 import { ebayRoutes } from "./routes/ebay.js";
 import { billingRoutes } from "./routes/billing.js";
@@ -40,6 +41,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(itemRoutes);
   await app.register(heroImageRoutes);
+  await app.register(detailedDescriptionRoutes);
   await app.register(authRoutes);
   await app.register(ebayRoutes);
   await app.register(billingRoutes);

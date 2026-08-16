@@ -17,6 +17,10 @@ import type {
   SubscriptionTier,
   BillingStatusResponse,
   CheckoutUrlResponse,
+  DetailedDescriptionQuestionsFields,
+  DetailedDescriptionQuestionsResult,
+  DetailedDescriptionGenerateRequest,
+  DetailedDescriptionResult,
 } from "@verkaufs-app/shared";
 import { getOrCreateGuestDeviceId } from "./guest-device-id";
 import { getItem } from "./storage";
@@ -135,6 +139,44 @@ export async function composeMarketingHeroImage(
     throw new ApiRequestError(res.status, body);
   }
   return body as HeroImageComposingResult;
+}
+
+export async function getDetailedDescriptionQuestions(
+  photo: ImagePickerAsset,
+  fields: DetailedDescriptionQuestionsFields
+): Promise<DetailedDescriptionQuestionsResult> {
+  const form = new FormData();
+  await appendPhoto(form, photo, 0);
+  form.append("name", fields.name);
+  form.append("category", fields.category);
+  form.append("condition_guess", fields.condition_guess);
+
+  const res = await fetch(`${API_BASE_URL}/items/detailed-description/questions`, {
+    method: "POST",
+    body: form,
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as DetailedDescriptionQuestionsResult;
+}
+
+export async function generateDetailedDescription(
+  input: DetailedDescriptionGenerateRequest
+): Promise<DetailedDescriptionResult> {
+  const res = await fetch(`${API_BASE_URL}/items/detailed-description/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as DetailedDescriptionResult;
 }
 
 export async function getEbayStatus(): Promise<{ connected: boolean }> {

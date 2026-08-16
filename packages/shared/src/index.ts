@@ -8,6 +8,7 @@ export * from "./schemas/auth.js";
 export * from "./schemas/moderation.js";
 export * from "./schemas/ebay-draft.js";
 export * from "./schemas/billing.js";
+export * from "./schemas/detailed-description.js";
 export * from "./constants/disclaimers.js";
 export * from "./schemas/errors.js";
 export * from "./types/enums.js";

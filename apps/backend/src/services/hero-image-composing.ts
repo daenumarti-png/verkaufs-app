@@ -1,30 +1,16 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { removeBackground } from "@imgly/background-removal-node";
 import type { BoundingBox } from "@verkaufs-app/shared";
 
-// Composing-Ansatz (Briefing Abschnitt 6, Ansatz 1): Artikel per Freisteller
-// aus dem besten Nutzerfoto isolieren, vor einen neutralen Studio-Hintergrund
-// setzen, dezenter Bodenschatten für Räumlichkeit. Kein generatives Risiko –
-// der Artikel selbst bleibt das unveränderte Originalfoto, nur freigestellt.
-// Optional (composeMarketingHeroImage) wird zusätzlich Titel/Preis/Zustand
-// als Text-Overlay ergänzt (Nutzerfeedback: das rein generative Stimmungsbild
-// wurde durch diese Variante ersetzt, da das reale Foto erkennbar bleiben muss).
+// Composing-Ansatz (Briefing Abschnitt 6, Ansatz 1): Artikel-Foto vor einen
+// neutralen Studio-Hintergrund setzen, dezenter Bodenschatten für Räumlichkeit.
+// Kein generatives Risiko – der Artikel selbst bleibt das unveränderte
+// Originalfoto. Optional (composeMarketingHeroImage) wird zusätzlich Titel/
+// Preis/Zustand als Text-Overlay ergänzt (Nutzerfeedback: das rein generative
+// Stimmungsbild wurde durch diese Variante ersetzt, da das reale Foto
+// erkennbar bleiben muss).
 //
-// Hinweis: removeBackground lädt beim ersten Aufruf ein ONNX-Segmentierungsmodell
-// nach (~Netzwerkzugriff, danach lokal gecacht) – erster Call ist deshalb spürbar
-// langsamer als folgende.
-
-// @imgly/background-removal-node berechnet seinen Standard-publicPath relativ
-// zu process.cwd() (siehe deren schema.ts). Unter npm-Workspaces ist cwd beim
-// "npm run dev --workspace=apps/backend" aber apps/backend, während das Paket
-// (durch Hoisting) im Root-node_modules liegt -> ENOENT auf resources.json.
-// Fix: publicPath explizit über echte ESM-Modulauflösung bestimmen statt auf
-// den kaputten cwd-Default zu vertrauen.
-const packageEntryUrl = import.meta.resolve("@imgly/background-removal-node");
-const packageDistDir = path.dirname(fileURLToPath(packageEntryUrl));
-const RESOURCES_PUBLIC_PATH = `file://${packageDistDir.replace(/\\/g, "/")}/`;
+// Echter Freisteller (Hintergrund-Entfernung) ist aktuell deaktiviert, siehe
+// Kommentar bei buildComposedOverlays() weiter unten.
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 1200;
@@ -149,6 +135,21 @@ function buildFactsBannerSvg(width: number, height: number, facts: MarketingFact
   </svg>`;
 }
 
+// TEMPORÄR deaktiviert (siehe unten) - Hintergrund-Entfernung bewusst NICHT
+// mehr aufgerufen. @imgly/background-removal-node (onnxruntime-node ~1.17,
+// letztes Paket-Release ~2 Jahre her, faktisch unmaintained) stürzt in der
+// Cloud-Run-Produktionsumgebung reproduzierbar UND SOFORT (<2s, also vor
+// echter Modell-Inferenz) mit einem nativen Speicherfehler ab ("free():
+// invalid size" / "munmap_chunk(): invalid pointer", SIGABRT) - das reisst
+// den GESAMTEN Container-Prozess mit, nicht nur den einzelnen Request, und
+// betrifft daher potenziell auch andere gleichzeitige Nutzer. Weder ein
+// zusätzliches CPU-Kontingent (2 vCPU statt Default) noch mehr Memory (2GiB)
+// behoben das - kein reines Ressourcenproblem, sondern vermutlich eine
+// Binärkompatibilität der vorkompilierten onnxruntime-node-Engine mit der
+// Cloud-Run-Laufzeitumgebung. Bis eine stabile Ersatz-Bibliothek evaluiert
+// ist, wird das freigestellte Studio-Hintergrund-Kompositing übersprungen -
+// der Artikel bleibt auf seinem Originalfoto (nur zugeschnitten), damit
+// Freisteller/Marketing-Titelbild wenigstens nutzbar bleiben statt zu crashen.
 async function buildComposedOverlays(
   sourcePhotoBuffer: Buffer,
   boundingBox?: BoundingBox | null
@@ -159,33 +160,13 @@ async function buildComposedOverlays(
   // unverändertes Originalfoto (bisheriges Verhalten).
   const croppedBuffer = await cropToBoundingBox(sourcePhotoBuffer, boundingBox);
 
-  // Bewusst ein Blob mit explizitem MIME-Type statt des rohen Buffers: Die
-  // Bibliothek wrapt einen rohen Buffer intern selbst in ein Blob, aber ohne
-  // "type" zu setzen, was ihre eigene Formaterkennung mit "Unsupported
-  // format: " (leerer String) scheitern lässt.
-  const sourceBlob = new Blob([croppedBuffer], { type: "image/jpeg" });
-
-  const cutoutBlob = await removeBackground(sourceBlob, {
-    publicPath: RESOURCES_PUBLIC_PATH,
-    model: "medium",
-    output: { format: "image/png" },
-  });
-  const cutoutBuffer = Buffer.from(await cutoutBlob.arrayBuffer());
-
-  // Transparente Ränder wegschneiden, damit der Artikel zentriert und
-  // proportional auf den neuen Hintergrund passt (statt in der ursprünglichen,
-  // ggf. sehr weiten Foto-Rahmung zu "schwimmen").
-  const trimmed = await sharp(cutoutBuffer).trim().toBuffer();
-
   const maxItemWidth = Math.round(CANVAS_WIDTH * (1 - PADDING_RATIO * 2));
   const maxItemHeight = Math.round(CANVAS_HEIGHT * (1 - PADDING_RATIO * 2));
 
-  // Bewusst OHNE withoutEnlargement: Das Segmentierungsmodell läuft intern auf
-  // fester Auflösung: Ist das Quellfoto kleiner als die Ziel-Canvas, muss der
-  // freigestellte Artikel hochskaliert werden, sonst entsteht ein winziges
-  // Motiv auf grossem Hintergrund. Kleinere Quellfotos ergeben eine weichere
-  // Kante, das ist der bessere Kompromiss gegenüber einem verlorenen Artikel.
-  const resizedItem = await sharp(trimmed)
+  // Bewusst OHNE withoutEnlargement: ist das (zugeschnittene) Quellfoto
+  // kleiner als die Ziel-Canvas, muss es hochskaliert werden, sonst entsteht
+  // ein winziges Motiv auf grossem Hintergrund.
+  const resizedItem = await sharp(croppedBuffer)
     .resize({ width: maxItemWidth, height: maxItemHeight, fit: "inside" })
     .toBuffer();
   const { width: itemWidth, height: itemHeight } = await sharp(resizedItem).metadata();
