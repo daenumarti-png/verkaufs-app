@@ -26,6 +26,16 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),
+  // Zweite gültige Audience für Google-ID-Tokens, die über Firebase
+  // Authentication (Web-Login, siehe login.tsx) statt über den
+  // ursprünglichen, manuell konfigurierten OAuth-Client (native/Expo Go)
+  // ausgestellt wurden – Firebase provisioniert dafür einen eigenen
+  // OAuth-Client mit eigener Client-ID. Optional, damit der native Flow
+  // auch ohne diesen Wert unverändert funktioniert.
+  GOOGLE_CLIENT_ID_WEB: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
   APPLE_CLIENT_ID: z
     .string()
     .optional()

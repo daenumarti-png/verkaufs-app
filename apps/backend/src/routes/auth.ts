@@ -24,7 +24,7 @@ export async function authRoutes(app: FastifyInstance) {
         .send(errorReply("invalid_request", "Anfrage-Body entspricht nicht dem erwarteten Schema."));
     }
 
-    const result = await verifyGoogleIdToken(parsedBody.data.id_token, env.GOOGLE_CLIENT_ID);
+    const result = await verifyGoogleIdToken(parsedBody.data.id_token, [env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_ID_WEB]);
 
     if (result.status === "not_configured") {
       return reply

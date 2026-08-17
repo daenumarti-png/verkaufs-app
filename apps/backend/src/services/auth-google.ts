@@ -8,15 +8,19 @@ export type GoogleVerifyResult =
   | { status: "invalid_token" }
   | { status: "not_configured" };
 
-export async function verifyGoogleIdToken(idToken: string, expectedAudience: string | undefined): Promise<GoogleVerifyResult> {
-  if (!expectedAudience) {
+export async function verifyGoogleIdToken(
+  idToken: string,
+  expectedAudiences: (string | undefined)[]
+): Promise<GoogleVerifyResult> {
+  const audience = expectedAudiences.filter((a): a is string => Boolean(a));
+  if (audience.length === 0) {
     return { status: "not_configured" };
   }
 
   client ??= new OAuth2Client();
 
   try {
-    const ticket = await client.verifyIdToken({ idToken, audience: expectedAudience });
+    const ticket = await client.verifyIdToken({ idToken, audience });
     const payload = ticket.getPayload();
     // email_verified: Google kann technisch ein Token mit unbestätigter
     // E-Mail ausstellen (z.B. bei bestimmten Workspace-Konfigurationen) –

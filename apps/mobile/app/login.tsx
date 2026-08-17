@@ -4,6 +4,8 @@ import { router } from "expo-router";
 import * as Google from "expo-auth-session/providers/google";
 import * as WebBrowser from "expo-web-browser";
 import * as AppleAuthentication from "expo-apple-authentication";
+import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import { firebaseAuth, googleAuthProvider } from "../lib/firebase";
 import { completeGoogleSignIn, completeAppleSignIn, registerWithEmail, loginWithEmail } from "../lib/auth";
 import { ACCENT, BG, CARD, TEXT, MUTED } from "../constants/theme";
 
@@ -44,6 +46,44 @@ export default function LoginScreen() {
       setError("Google-Anmeldung fehlgeschlagen oder abgebrochen.");
     }
   }, [response]);
+
+  // Web nutzt Firebase Authentication statt expo-auth-session: Firebase
+  // verwaltet autorisierte Domains automatisch (Popup-Redirect läuft über
+  // die eigene, von Firebase verwaltete authDomain) - kein manuelles
+  // OAuth-redirect_uri-Konfigurieren mehr nötig, das war die Ursache des
+  // bisherigen "redirect_uri_mismatch"-Fehlers auf der deployten Web-App.
+  // Nativ (Expo Go) bleibt beim bisherigen expo-auth-session-Flow, da
+  // Firebase JS SDKs Popup/Redirect-Login ausschliesslich im Browser
+  // unterstützt - der Response kommt dort weiterhin über den obigen
+  // useEffect (response?.type) rein.
+  const handleGoogleSignIn = () => {
+    setError(null);
+    if (Platform.OS === "web") {
+      void signInWithGoogleOnWeb();
+    } else {
+      promptAsync();
+    }
+  };
+
+  const signInWithGoogleOnWeb = async () => {
+    setLoading("google");
+    try {
+      const result = await signInWithPopup(firebaseAuth, googleAuthProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (!credential?.idToken) throw new Error("Kein Google-Token erhalten.");
+      await completeGoogleSignIn(credential.idToken);
+      router.back();
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      // Nutzer hat das Popup selbst geschlossen/abgebrochen - kein Fehler,
+      // den man anzeigen müsste.
+      if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") {
+        setError(err instanceof Error ? err.message : "Google-Anmeldung fehlgeschlagen.");
+      }
+    } finally {
+      setLoading(null);
+    }
+  };
 
   const handleAppleSignIn = async () => {
     setError(null);
@@ -112,10 +152,7 @@ export default function LoginScreen() {
         </Text>
 
         <Pressable
-          onPress={() => {
-            setError(null);
-            promptAsync();
-          }}
+          onPress={handleGoogleSignIn}
           disabled={!request || loading !== null}
           style={[styles.googleButton, (!request || loading !== null) && styles.buttonDisabled]}
         >
