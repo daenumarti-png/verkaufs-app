@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { ApiError, EbayDraftResult } from "@verkaufs-app/shared";
 import { ebayDraftFieldsSchema } from "@verkaufs-app/shared";
@@ -30,6 +30,15 @@ import { EXPENSIVE_ENDPOINT_RATE_LIMIT } from "../config/rate-limit.js";
 function errorReply(error: string, message: string): ApiError {
   return { error, message };
 }
+
+// eBays "Marketplace Account Deletion/Closure Notifications" (Pflicht für
+// Produktivzugang, siehe https://developer.ebay.com/api-docs/static/data-handling-update.html):
+// diese exakte URL muss 1:1 im eBay-Entwicklerportal als Benachrichtigungs-
+// Endpunkt hinterlegt werden (Application Keys -> Notifications ->
+// Marketplace Account Deletion) - sie fliesst wortgleich in die Challenge-
+// Response-Hash-Berechnung unten ein, ein Abweichen (z.B. trailing slash)
+// würde die Verifikation scheitern lassen.
+const ACCOUNT_DELETION_ENDPOINT_URL = "https://api-kqcjsq6axa-oa.a.run.app/ebay/account-deletion-notification";
 
 // /ebay/callback spiegelt eBay-Query-Parameter (potenziell durch einen
 // präparierten Link beeinflussbar) in eine HTML-Antwort – ohne Escaping wäre
@@ -262,5 +271,56 @@ export async function ebayRoutes(app: FastifyInstance) {
         .status(502)
         .send(errorReply("ebay_offer_failed", "Angebot konnte bei eBay nicht angelegt werden. Bitte nochmals versuchen."));
     }
+  });
+
+  // Schritt 1 der eBay-Endpunkt-Verifikation: eBay ruft diesen GET-Endpunkt
+  // beim Einrichten im Entwicklerportal einmalig mit ?challenge_code=... auf
+  // und erwartet den SHA-256-Hash aus (in genau dieser Reihenfolge)
+  // challengeCode + verificationToken + endpointUrl als Hex-String zurück -
+  // damit weist der Betreiber nach, dass er diesen Endpunkt kontrolliert.
+  app.get("/ebay/account-deletion-notification", { config: { rateLimit: false } }, async (req, reply) => {
+    const query = req.query as Record<string, string | undefined>;
+    const challengeCode = query.challenge_code;
+    if (!challengeCode) {
+      return reply.status(400).send(errorReply("invalid_request", "challenge_code fehlt."));
+    }
+    if (!env.EBAY_DELETION_VERIFICATION_TOKEN) {
+      return reply
+        .status(503)
+        .send(errorReply("service_unavailable", "Account-Deletion-Endpunkt ist aktuell nicht konfiguriert."));
+    }
+
+    const challengeResponse = createHash("sha256")
+      .update(challengeCode)
+      .update(env.EBAY_DELETION_VERIFICATION_TOKEN)
+      .update(ACCOUNT_DELETION_ENDPOINT_URL)
+      .digest("hex");
+
+    return reply.status(200).header("Content-Type", "application/json").send({ challengeResponse });
+  });
+
+  // Schritt 2: die eigentlichen Löschbenachrichtigungen. eBay erwartet eine
+  // zeitnahe 200-Bestätigung, unabhängig davon, ob wir überhaupt eine
+  // passende Verknüpfung finden - eine fehlende Bestätigung würde eBay als
+  // Fehlschlag werten und den Endpunkt erneut/eskalierend anstossen.
+  // Gelöscht wird NUR die EbayConnection-Zeile (der verschlüsselte Refresh-
+  // Token + eBay-Nutzer-ID) - das eigentliche Verkaufsapp-Konto des Nutzers
+  // bleibt bestehen, da es sich um dessen EIGENES Konto handelt, nicht um
+  // von eBay bezogene Daten.
+  app.post("/ebay/account-deletion-notification", { config: { rateLimit: false } }, async (req, reply) => {
+    const body = req.body as { notification?: { data?: { userId?: string } } } | undefined;
+    const ebayUserId = body?.notification?.data?.userId;
+
+    if (ebayUserId) {
+      try {
+        await prisma.ebayConnection.deleteMany({ where: { ebayUserId } });
+      } catch (err) {
+        req.log.error(err, "eBay-Account-Deletion-Verarbeitung fehlgeschlagen");
+      }
+    } else {
+      req.log.warn({ body }, "eBay-Account-Deletion-Benachrichtigung ohne erkennbare userId erhalten");
+    }
+
+    return reply.status(200).send({ acknowledged: true });
   });
 }

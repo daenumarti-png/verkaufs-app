@@ -190,6 +190,13 @@ model EbayConnection {
   refreshTokenExpiresAt DateTime
   scopes                String[]
 
+  // eBays eigene Nutzer-ID (via Identity API, siehe ebay-oauth.ts) - Pflicht,
+  // um eBays "Marketplace Account Deletion"-Benachrichtigungen (siehe
+  // routes/ebay.ts) einer konkreten Verknüpfung zuordnen zu können. Nullable,
+  // da bereits bestehende Verknüpfungen (vor dieser Änderung) diesen Wert
+  // noch nicht haben - werden bei der nächsten Token-Erneuerung nachgetragen.
+  ebayUserId String? @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

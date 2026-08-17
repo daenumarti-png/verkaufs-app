@@ -29,11 +29,17 @@ export async function verifyOAuthState(state: string): Promise<string | null> {
 }
 
 // sell.inventory: Inventory-Items/Offers anlegen; sell.account: Business
-// Policies + Merchant Location abfragen (Phase 12). Scope-Strings sind laut
-// eBay-Doku umgebungsunabhängig identisch (auch im Sandbox-Betrieb).
+// Policies + Merchant Location abfragen (Phase 12); commerce.identity.readonly:
+// liefert die eBay-eigene Nutzer-ID (Identity API, siehe fetchEbayUserId) -
+// nötig, um eBays "Marketplace Account Deletion"-Benachrichtigungen einer
+// konkreten Verknüpfung zuordnen zu können (sonst könnten wir bei einer
+// Löschanfrage nicht wissen, welche EbayConnection-Zeile betroffen ist).
+// Scope-Strings sind laut eBay-Doku umgebungsunabhängig identisch (auch im
+// Sandbox-Betrieb).
 const SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
+  "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
 ].join(" ");
 
 function getAuthBaseUrl(): string {
@@ -42,6 +48,33 @@ function getAuthBaseUrl(): string {
 
 export function getEbayApiBaseUrl(): string {
   return env.EBAY_ENVIRONMENT === "PRODUCTION" ? "https://api.ebay.com" : "https://api.sandbox.ebay.com";
+}
+
+// Identity API läuft über einen eigenen Host ("apiz" statt "api") - nicht
+// derselbe Host wie die übrigen Sell-APIs.
+function getEbayIdentityBaseUrl(): string {
+  return env.EBAY_ENVIRONMENT === "PRODUCTION" ? "https://apiz.ebay.com" : "https://apiz.sandbox.ebay.com";
+}
+
+/**
+ * Fail-safe: liefert bei jedem Fehler null statt zu werfen - eine
+ * fehlgeschlagene Identity-Abfrage soll die eBay-Verknüpfung selbst nicht
+ * blockieren (ebayUserId bleibt dann vorerst null, wird bei der nächsten
+ * Token-Erneuerung erneut versucht). Bekannte Einschränkung: laut eBay-
+ * Statusseite ist getUser im SANDBOX-Betrieb aktuell nicht zuverlässig
+ * funktionsfähig - im Produktivbetrieb sollte es zuverlässig funktionieren.
+ */
+async function fetchEbayUserId(accessToken: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${getEbayIdentityBaseUrl()}/commerce/identity/v1/user/`, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { userId?: string };
+    return data.userId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function isEbayConfigured(): boolean {
@@ -104,11 +137,15 @@ export async function saveEbayConnection(userId: string, tokens: TokenResponse):
   }
   const encryptedRefreshToken = encryptSecret(tokens.refresh_token, env.EBAY_TOKEN_ENCRYPTION_KEY);
   const refreshTokenExpiresAt = new Date(Date.now() + tokens.refresh_token_expires_in * 1000);
+  // Für spätere Zuordnung von eBays "Marketplace Account Deletion"-
+  // Benachrichtigungen (siehe routes/ebay.ts) - fail-safe: bleibt null bei
+  // Fehler, blockiert die Verknüpfung selbst nicht.
+  const ebayUserId = await fetchEbayUserId(tokens.access_token);
 
   await prisma.ebayConnection.upsert({
     where: { userId },
-    create: { userId, encryptedRefreshToken, refreshTokenExpiresAt, scopes: SCOPES.split(" ") },
-    update: { encryptedRefreshToken, refreshTokenExpiresAt, scopes: SCOPES.split(" ") },
+    create: { userId, encryptedRefreshToken, refreshTokenExpiresAt, scopes: SCOPES.split(" "), ebayUserId },
+    update: { encryptedRefreshToken, refreshTokenExpiresAt, scopes: SCOPES.split(" "), ebayUserId },
   });
 }
 

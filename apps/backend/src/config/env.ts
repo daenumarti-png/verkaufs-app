@@ -81,6 +81,15 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v && v.length > 0 ? v : undefined)),
+  // eBay verlangt für Produktivzugang einen Endpunkt für "Marketplace
+  // Account Deletion"-Benachrichtigungen (siehe routes/ebay.ts) - dieses
+  // Token wird beim Einrichten des Endpunkts im eBay-Entwicklerportal
+  // hinterlegt und dient dort wie hier zur Challenge-Response-Verifikation
+  // (32-80 Zeichen, nur alphanumerisch/_/-, siehe eBay-Doku).
+  EBAY_DELETION_VERIFICATION_TOKEN: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 
   // Phase-Abrechnung – Stripe. Alle optional, da der Server auch ohne
   // konfiguriertes Billing starten soll (Endpunkte antworten dann mit
