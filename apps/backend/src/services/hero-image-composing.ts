@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import type { BoundingBox } from "@verkaufs-app/shared";
+import { detectPrivacyRegions } from "./privacy-redaction.js";
 
 // Composing-Ansatz (Briefing Abschnitt 6, Ansatz 1): Artikel-Foto vor einen
 // neutralen Studio-Hintergrund setzen, dezenter Bodenschatten für Räumlichkeit.
@@ -64,6 +65,70 @@ async function cropToBoundingBox(sourceBuffer: Buffer, box: BoundingBox | null |
     return await sharp(sourceBuffer).extract({ left, top, width, height }).toBuffer();
   } catch {
     return sourceBuffer;
+  }
+}
+
+// Kleinerer Sicherheitsrand als beim Artikel-Crop (BBOX_PADDING_RATIO):
+// hier soll wirklich nur das Gesicht/Schild selbst verpixelt werden, kein
+// grossflächiger Bereich (explizite Nutzeranforderung) - der Rand gleicht
+// nur leichte Ungenauigkeit der KI-Erkennung aus.
+const PRIVACY_PADDING_RATIO = 0.06;
+
+async function pixelateRegion(
+  buffer: Buffer,
+  imgWidth: number,
+  imgHeight: number,
+  box: BoundingBox
+): Promise<sharp.OverlayOptions | null> {
+  const padX = box.width * PRIVACY_PADDING_RATIO;
+  const padY = box.height * PRIVACY_PADDING_RATIO;
+  const x0 = clampRange(box.x - padX, 0, 1);
+  const y0 = clampRange(box.y - padY, 0, 1);
+  const x1 = clampRange(box.x + box.width + padX, 0, 1);
+  const y1 = clampRange(box.y + box.height + padY, 0, 1);
+
+  const left = Math.round(x0 * imgWidth);
+  const top = Math.round(y0 * imgHeight);
+  const width = Math.min(Math.round((x1 - x0) * imgWidth), imgWidth - left);
+  const height = Math.min(Math.round((y1 - y0) * imgHeight), imgHeight - top);
+  if (width <= 0 || height <= 0) return null;
+
+  try {
+    const patch = await sharp(buffer).extract({ left, top, width, height }).toBuffer();
+    // Deutlich sichtbare Pixelation statt weichem Weichzeichner - eindeutig
+    // als "absichtlich verdeckt" erkennbar, nicht durch simple
+    // Schärfungsfilter rückgängig zu machen.
+    const blockSize = Math.max(3, Math.round(Math.min(width, height) / 9));
+    const smallWidth = Math.max(1, Math.round(width / blockSize));
+    const smallHeight = Math.max(1, Math.round(height / blockSize));
+    const pixelated = await sharp(patch)
+      .resize(smallWidth, smallHeight, { kernel: "nearest" })
+      .resize(width, height, { kernel: "nearest" })
+      .toBuffer();
+    return { input: pixelated, left, top };
+  } catch {
+    return null;
+  }
+}
+
+// Fail-safe: liefert bei jedem Fehler (Metadata fehlt, sharp-Fehler) das
+// unveränderte Foto zurück, statt das Titelbild scheitern zu lassen -
+// Datenschutz-Verpixelung ist eine Zusatz-Absicherung, kein Grund, das
+// Kernfeature zu blockieren.
+async function redactPrivacyRegions(buffer: Buffer, regions: BoundingBox[]): Promise<Buffer> {
+  if (regions.length === 0) return buffer;
+  try {
+    const { width: imgWidth, height: imgHeight } = await sharp(buffer).metadata();
+    if (!imgWidth || !imgHeight) return buffer;
+
+    const overlays = (
+      await Promise.all(regions.map((box) => pixelateRegion(buffer, imgWidth, imgHeight, box)))
+    ).filter((o): o is sharp.OverlayOptions => o !== null);
+    if (overlays.length === 0) return buffer;
+
+    return await sharp(buffer).composite(overlays).toBuffer();
+  } catch {
+    return buffer;
   }
 }
 
@@ -152,7 +217,8 @@ function buildFactsBannerSvg(width: number, height: number, facts: MarketingFact
 // Freisteller/Marketing-Titelbild wenigstens nutzbar bleiben statt zu crashen.
 async function buildComposedOverlays(
   sourcePhotoBuffer: Buffer,
-  boundingBox?: BoundingBox | null
+  boundingBox: BoundingBox | null | undefined,
+  apiKey: string | undefined
 ): Promise<sharp.OverlayOptions[]> {
   // Phase 4b: falls eine Bounding Box übergeben wurde, zuerst auf genau
   // diesen Artikel zuschneiden, damit der Freisteller nicht andere Artikel
@@ -160,13 +226,24 @@ async function buildComposedOverlays(
   // unverändertes Originalfoto (bisheriges Verhalten).
   const croppedBuffer = await cropToBoundingBox(sourcePhotoBuffer, boundingBox);
 
+  // Datenschutz: Gesichter/Kontrollschilder auf dem für das Titelbild
+  // verwendeten (bereits zugeschnittenen) Foto erkennen und NUR diese engen
+  // Bereiche verpixeln, bevor das Foto öffentlich sichtbar wird - läuft auf
+  // dem bereits zugeschnittenen Foto, damit die Bounding Boxes direkt in
+  // der richtigen Koordinaten-Basis liegen.
+  const privacyRegions = await detectPrivacyRegions(croppedBuffer.toString("base64"), "image/jpeg", apiKey);
+  const redactedBuffer = await redactPrivacyRegions(croppedBuffer, [
+    ...privacyRegions.faces,
+    ...privacyRegions.licensePlates,
+  ]);
+
   const maxItemWidth = Math.round(CANVAS_WIDTH * (1 - PADDING_RATIO * 2));
   const maxItemHeight = Math.round(CANVAS_HEIGHT * (1 - PADDING_RATIO * 2));
 
   // Bewusst OHNE withoutEnlargement: ist das (zugeschnittene) Quellfoto
   // kleiner als die Ziel-Canvas, muss es hochskaliert werden, sonst entsteht
   // ein winziges Motiv auf grossem Hintergrund.
-  const resizedItem = await sharp(croppedBuffer)
+  const resizedItem = await sharp(redactedBuffer)
     .resize({ width: maxItemWidth, height: maxItemHeight, fit: "inside" })
     .toBuffer();
   const { width: itemWidth, height: itemHeight } = await sharp(resizedItem).metadata();
@@ -187,8 +264,12 @@ async function buildComposedOverlays(
   ];
 }
 
-export async function composeHeroImage(sourcePhotoBuffer: Buffer, boundingBox?: BoundingBox | null): Promise<Buffer> {
-  const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox);
+export async function composeHeroImage(
+  sourcePhotoBuffer: Buffer,
+  boundingBox?: BoundingBox | null,
+  apiKey?: string
+): Promise<Buffer> {
+  const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox, apiKey);
   return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))
     .composite(overlays)
     .jpeg({ quality: 90 })
@@ -198,9 +279,10 @@ export async function composeHeroImage(sourcePhotoBuffer: Buffer, boundingBox?: 
 export async function composeMarketingHeroImage(
   sourcePhotoBuffer: Buffer,
   facts: MarketingFacts,
-  boundingBox?: BoundingBox | null
+  boundingBox?: BoundingBox | null,
+  apiKey?: string
 ): Promise<Buffer> {
-  const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox);
+  const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox, apiKey);
   const banner = Buffer.from(buildFactsBannerSvg(CANVAS_WIDTH, BANNER_HEIGHT, facts));
 
   return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))

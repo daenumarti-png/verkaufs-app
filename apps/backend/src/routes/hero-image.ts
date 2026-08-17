@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ApiError, BoundingBox, HeroImageComposingResult } from "@verkaufs-app/shared";
 import { boundingBoxFieldsSchema, composeMarketingHeroImageFieldsSchema } from "@verkaufs-app/shared";
+import { env } from "../config/env.js";
 import { processPhotos } from "../services/photo-processing.js";
 import { composeHeroImage, composeMarketingHeroImage } from "../services/hero-image-composing.js";
 
@@ -69,7 +70,7 @@ export async function heroImageRoutes(app: FastifyInstance) {
 
     try {
       const sourceBuffer = Buffer.from(processed[0].base64, "base64");
-      const heroImageBuffer = await composeHeroImage(sourceBuffer, boundingBox);
+      const heroImageBuffer = await composeHeroImage(sourceBuffer, boundingBox, env.ANTHROPIC_API_KEY);
       const result: HeroImageComposingResult = {
         image_base64: heroImageBuffer.toString("base64"),
         media_type: "image/jpeg",
@@ -142,7 +143,8 @@ export async function heroImageRoutes(app: FastifyInstance) {
           priceChf: parsedFields.data.price_chf,
           conditionGuess: parsedFields.data.condition_guess,
         },
-        boundingBox
+        boundingBox,
+        env.ANTHROPIC_API_KEY
       );
       const result: HeroImageComposingResult = {
         image_base64: heroImageBuffer.toString("base64"),
