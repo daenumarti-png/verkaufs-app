@@ -49,7 +49,10 @@ export default function HomeScreen() {
   const [photos, setPhotos] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [items, setItems] = useState<AnalyzedItem[] | null>(null);
   const [resultMeta, setResultMeta] = useState<ResultMeta | null>(null);
-  const [answeredChips, setAnsweredChips] = useState<Record<string, string>>({});
+  // Mehrere ausgewählte Optionen pro Frage (Key "{itemIndex}-{question}"),
+  // damit Fragen mit allow_multiple=true (z.B. "welche Matratzengrössen
+  // sind enthalten?") mehrere gleichzeitig markierte Chips erlauben.
+  const [answeredChips, setAnsweredChips] = useState<Record<string, string[]>>({});
   const [refinementNotes, setRefinementNotes] = useState<Record<number, string>>({});
   const [refiningIndex, setRefiningIndex] = useState<number | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -159,10 +162,20 @@ export default function HomeScreen() {
     router.push("/export");
   };
 
-  const handleAnswerChip = async (itemIndex: number, question: string, option: string) => {
+  const handleAnswerChip = async (itemIndex: number, question: string, option: string, allowMultiple: boolean) => {
     if (!items) return;
     const key = `${itemIndex}-${question}`;
-    setAnsweredChips((prev) => ({ ...prev, [key]: option }));
+    const previousSelection = answeredChips[key] ?? [];
+    // Einzelauswahl (Standard): Tippen ersetzt die bisherige Auswahl.
+    // Mehrfachauswahl: Tippen schaltet die Option an/aus, bereits gewählte
+    // Optionen bleiben markiert (z.B. "90x200cm" UND "90x190cm" gleichzeitig).
+    const nextSelection = allowMultiple
+      ? previousSelection.includes(option)
+        ? previousSelection.filter((o) => o !== option)
+        : [...previousSelection, option]
+      : [option];
+    setAnsweredChips((prev) => ({ ...prev, [key]: nextSelection }));
+    if (nextSelection.length === 0) return; // letzte Option abgewählt: nichts zu verfeinern
     setRefiningIndex(itemIndex);
     const item = items[itemIndex];
     try {
@@ -176,7 +189,11 @@ export default function HomeScreen() {
           sell_score: item.sell_score,
           estimated_days_to_sell: item.estimated_days_to_sell,
         },
-        clarifying_answers: [{ question, selected_option: option }],
+        // refine-estimate erwartet eine einzelne Antwort pro Frage (Freitext-
+        // Feld, kein strukturiertes Array) – mehrere gewählte Optionen werden
+        // hier zu einem Text zusammengefasst, das Modell liest es ohnehin als
+        // beschreibenden Kontext, nicht strukturiert.
+        clarifying_answers: [{ question, selected_option: nextSelection.join(" und ") }],
       });
       setItems((prev) => {
         if (!prev) return prev;
@@ -374,9 +391,9 @@ function ItemCard({
   item: AnalyzedItem;
   itemIndex: number;
   isRefining: boolean;
-  answeredChips: Record<string, string>;
+  answeredChips: Record<string, string[]>;
   refinementNote?: string;
-  onAnswerChip: (itemIndex: number, question: string, option: string) => void;
+  onAnswerChip: (itemIndex: number, question: string, option: string, allowMultiple: boolean) => void;
   onExport: (item: AnalyzedItem) => void;
   photos: ImagePicker.ImagePickerAsset[];
   isLoggedIn: boolean;
@@ -470,11 +487,11 @@ function ItemCard({
               <Text style={styles.clarifyingQuestionText}>{q.question}</Text>
               <View style={styles.chipRow}>
                 {q.options.map((option) => {
-                  const selected = answeredChips[`${itemIndex}-${q.question}`] === option;
+                  const selected = (answeredChips[`${itemIndex}-${q.question}`] ?? []).includes(option);
                   return (
                     <Pressable
                       key={option}
-                      onPress={() => onAnswerChip(itemIndex, q.question, option)}
+                      onPress={() => onAnswerChip(itemIndex, q.question, option, q.allow_multiple)}
                       disabled={isRefining}
                       style={[styles.chip, selected && styles.chipSelected]}
                     >

@@ -8,6 +8,12 @@ import { listingPlatformSchema } from "./listing-export.js";
 export const clarifyingQuestionSchema = z.object({
   question: z.string().min(1).max(120),
   options: z.array(z.string().min(1).max(30)).min(2).max(4),
+  // true, wenn mehrere Optionen gleichzeitig zutreffen können statt sich
+  // gegenseitig auszuschliessen (z.B. "welche Matratzengrössen sind
+  // enthalten?" bei einem Bett mit zwei unterschiedlich grossen Matratzen
+  // - Hauptbett + Gästebett). Default false: die meisten Rückfragen sind
+  // echte Einzelauswahl (z.B. "Speichergrösse?").
+  allow_multiple: z.boolean().default(false),
 });
 
 // Idealer Verkaufszeitpunkt (Briefing Abschnitt 4). Immer befüllt – bei
