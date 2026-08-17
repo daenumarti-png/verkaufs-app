@@ -17,6 +17,7 @@ import type {
   SubscriptionTier,
   BillingStatusResponse,
   CheckoutUrlResponse,
+  BillingPortalUrlResponse,
   DetailedDescriptionQuestionsFields,
   DetailedDescriptionQuestionsResult,
   DetailedDescriptionGenerateRequest,
@@ -288,4 +289,15 @@ export async function getBillingCheckoutUrl(tier: SubscriptionTier): Promise<Che
     throw new ApiRequestError(res.status, body);
   }
   return body as CheckoutUrlResponse;
+}
+
+export async function getBillingPortalUrl(): Promise<BillingPortalUrlResponse> {
+  const headers = await buildAuthHeaders();
+  const res = await fetch(`${API_BASE_URL}/billing/portal-url`, { headers });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiRequestError(res.status, body);
+  }
+  return body as BillingPortalUrlResponse;
 }

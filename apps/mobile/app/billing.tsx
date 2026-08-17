@@ -4,7 +4,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
 import type { AuthUser, SubscriptionTier } from "@verkaufs-app/shared";
-import { getBillingStatus, getBillingCheckoutUrl, ApiRequestError } from "../lib/api";
+import { getBillingStatus, getBillingCheckoutUrl, getBillingPortalUrl, ApiRequestError } from "../lib/api";
 import { getStoredUser } from "../lib/auth";
 import { ACCENT, TEAL, BG, CARD, TEXT, MUTED } from "../constants/theme";
 
@@ -41,11 +41,26 @@ export default function BillingScreen() {
     },
   });
 
+  // Stripe-gehostetes Kundenportal: Rechnungshistorie ("Kosten einsehen")
+  // + Zahlungsmethode ändern, ohne beides in der App selbst nachzubauen.
+  const portalMutation = useMutation({
+    mutationFn: async () => {
+      const { portal_url } = await getBillingPortalUrl();
+      await WebBrowser.openBrowserAsync(portal_url);
+    },
+  });
+
   const checkoutErrorMessage =
     checkoutMutation.error instanceof ApiRequestError
       ? checkoutMutation.error.message
       : checkoutMutation.error
         ? "Checkout konnte nicht gestartet werden. Bitte nochmals versuchen."
+        : null;
+  const portalErrorMessage =
+    portalMutation.error instanceof ApiRequestError
+      ? portalMutation.error.message
+      : portalMutation.error
+        ? "Kundenportal konnte nicht geöffnet werden. Bitte nochmals versuchen."
         : null;
   const statusErrorMessage =
     statusQuery.error instanceof ApiRequestError
@@ -106,6 +121,23 @@ export default function BillingScreen() {
             <Text style={styles.statusDetailText}>
               Läuft bis {new Date(activeSubscription.currentPeriodEnd).toLocaleDateString("de-CH")}
             </Text>
+          </View>
+        )}
+
+        {activeSubscription && (
+          <View style={{ marginBottom: 12 }}>
+            <Pressable
+              onPress={() => portalMutation.mutate()}
+              disabled={portalMutation.isPending}
+              style={[styles.portalButton, portalMutation.isPending && styles.primaryButtonDisabled]}
+            >
+              {portalMutation.isPending ? (
+                <ActivityIndicator color={TEAL} />
+              ) : (
+                <Text style={styles.portalButtonText}>Kosten &amp; Zahlungsmethode verwalten</Text>
+              )}
+            </Pressable>
+            {portalErrorMessage && <Text style={styles.errorText}>{portalErrorMessage}</Text>}
           </View>
         )}
 
@@ -175,6 +207,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   statusConnectedText: { color: TEAL, fontWeight: "700", fontSize: 14, marginBottom: 6 },
+  portalButton: {
+    borderWidth: 1,
+    borderColor: TEAL,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  portalButtonText: { color: TEAL, fontWeight: "700", fontSize: 14 },
   statusDetailText: { color: MUTED, fontSize: 12.5, marginBottom: 2 },
   errorText: { color: "#E08A6F", fontSize: 13, textAlign: "center", marginBottom: 12 },
   backButton: { alignItems: "center", paddingVertical: 12, marginTop: 8 },

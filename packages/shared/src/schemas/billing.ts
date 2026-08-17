@@ -21,7 +21,14 @@ export const checkoutUrlResponseSchema = z.object({
   checkout_url: z.string(),
 });
 
+// Stripe-gehostetes Kundenportal (Rechnungshistorie + Zahlungsmethode
+// verwalten) – siehe GET /billing/portal-url.
+export const billingPortalUrlResponseSchema = z.object({
+  portal_url: z.string(),
+});
+
 export type SubscriptionTier = z.infer<typeof subscriptionTierSchema>;
 export type SubscriptionStatus = z.infer<typeof subscriptionStatusSchema>;
 export type BillingStatusResponse = z.infer<typeof billingStatusResponseSchema>;
 export type CheckoutUrlResponse = z.infer<typeof checkoutUrlResponseSchema>;
+export type BillingPortalUrlResponse = z.infer<typeof billingPortalUrlResponseSchema>;

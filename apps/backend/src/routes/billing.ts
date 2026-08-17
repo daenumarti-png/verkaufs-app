@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import type Stripe from "stripe";
-import type { ApiError, BillingStatusResponse, CheckoutUrlResponse } from "@verkaufs-app/shared";
+import type { ApiError, BillingStatusResponse, CheckoutUrlResponse, BillingPortalUrlResponse } from "@verkaufs-app/shared";
 import { requireUserId } from "../lib/auth-context.js";
 import { env } from "../config/env.js";
 import { SUBSCRIPTION_TIERS, type SubscriptionTierKey } from "../config/subscription.js";
-import { isStripeConfigured, createCheckoutSession, getStripeClient } from "../services/stripe.js";
+import { isStripeConfigured, createCheckoutSession, createBillingPortalSession, getStripeClient } from "../services/stripe.js";
 import { getRemainingQuota } from "../services/billing-usage.js";
 import { prisma } from "../db/client.js";
 import { EXPENSIVE_ENDPOINT_RATE_LIMIT } from "../config/rate-limit.js";
@@ -104,6 +104,39 @@ export async function billingRoutes(app: FastifyInstance) {
       return reply
         .status(502)
         .send(errorReply("checkout_failed", "Checkout konnte nicht gestartet werden. Bitte nochmals versuchen."));
+    }
+  });
+
+  // Stripe-gehostetes Kundenportal: Rechnungshistorie ("Kosten einsehen")
+  // + Zahlungsmethode ändern, ohne beides selbst nachzubauen. Braucht einen
+  // bestehenden Stripe-Customer (also mind. einmal Checkout durchlaufen) -
+  // ohne das gibt es serverseitig noch keine Zahlungshistorie zum Anzeigen.
+  app.get("/billing/portal-url", { config: { rateLimit: EXPENSIVE_ENDPOINT_RATE_LIMIT } }, async (req, reply) => {
+    const userId = await requireUserId(req, reply);
+    if (!userId) return;
+
+    if (!isStripeConfigured()) {
+      return reply
+        .status(503)
+        .send(errorReply("service_unavailable", "Abrechnung ist aktuell nicht konfiguriert."));
+    }
+
+    const subscription = await prisma.subscription.findUnique({ where: { userId } });
+    if (!subscription) {
+      return reply
+        .status(404)
+        .send(errorReply("no_billing_history", "Noch keine Zahlungshistorie vorhanden – zuerst ein Abo abschliessen."));
+    }
+
+    try {
+      const portalUrl = await createBillingPortalSession(subscription.stripeCustomerId);
+      const responseBody: BillingPortalUrlResponse = { portal_url: portalUrl };
+      return reply.status(200).send(responseBody);
+    } catch (err) {
+      req.log.error(err, "Stripe-Kundenportal-Session konnte nicht erstellt werden");
+      return reply
+        .status(502)
+        .send(errorReply("portal_failed", "Kundenportal konnte nicht geöffnet werden. Bitte nochmals versuchen."));
     }
   });
 

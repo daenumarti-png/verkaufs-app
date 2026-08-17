@@ -45,6 +45,14 @@ export async function getOrCreateStripeCustomer(user: User): Promise<string> {
   return customer.id;
 }
 
+// Twint neben Karte explizit anbieten, statt sich allein auf die im Stripe-
+// Dashboard hinterlegte Standardauswahl zu verlassen (die von hier aus nicht
+// prüfbar ist). Für "mode: subscription" akzeptiert Stripe nur
+// wiederkehrend-fähige Zahlungsmethoden - falls Twint das (noch) nicht für
+// Abos unterstützt, lehnt Stripe die Session mit einem klaren Parameter-
+// Fehler ab, der über die bestehende 502-Fehlerbehandlung sichtbar wird.
+const CHECKOUT_PAYMENT_METHOD_TYPES: Stripe.Checkout.SessionCreateParams.PaymentMethodType[] = ["card", "twint"];
+
 /**
  * Erstellt eine Stripe-Checkout-Session für das gewählte Abo-Tier. Der
  * Erfolgs-/Abbruch-Redirect zeigt auf das eigene App-Schema
@@ -58,6 +66,7 @@ export async function createCheckoutSession(user: User, tier: SubscriptionTierKe
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     customer: customerId,
+    payment_method_types: CHECKOUT_PAYMENT_METHOD_TYPES,
     line_items: [{ price: priceIdForTier(tier), quantity: 1 }],
     success_url: "verkaufsassistent://billing/success",
     cancel_url: "verkaufsassistent://billing/cancel",
@@ -67,6 +76,21 @@ export async function createCheckoutSession(user: User, tier: SubscriptionTierKe
   if (!session.url) {
     throw new Error("Stripe hat keine Checkout-URL zurückgegeben.");
   }
+  return session.url;
+}
+
+/**
+ * Stripe-gehostetes Kundenportal: zeigt Rechnungs-/Zahlungshistorie und
+ * erlaubt das Ändern der hinterlegten Zahlungsmethode - bewusst NICHT
+ * selbst nachgebaut (Rechnungs-PDFs, Kartendaten-Erfassung etc.), da Stripe
+ * das bereits vollständig, sicher und aktuell anbietet.
+ */
+export async function createBillingPortalSession(customerId: string): Promise<string> {
+  const stripe = getClient();
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: "verkaufsassistent://billing/portal-return",
+  });
   return session.url;
 }
 
