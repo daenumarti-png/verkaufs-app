@@ -16,7 +16,7 @@ import { detectPrivacyRegions } from "./privacy-redaction.js";
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 1200;
 const PADDING_RATIO = 0.12;
-const BANNER_HEIGHT = 230;
+const BANNER_HEIGHT = 170;
 
 // Phase 4b: Polster um die vom Modell gelieferte Bounding Box, bevor daraus
 // zugeschnitten wird - Vision-Model-Boxen sind oft leicht zu eng, das
@@ -138,15 +138,53 @@ export interface MarketingFacts {
   conditionGuess?: string;
 }
 
+// Nutzerfeedback: das bisherige Design (warmer Radial-Verlauf + reiner
+// Text-Balken) wirkte zu "roh"/unprofessionell. Überarbeitet nach Vorbild
+// hochwertiger Vorlagen-Designs (dezentes geometrisches Akzentelement,
+// klare Kartenwirkung durch einen dünnen Rahmen) - Farben bleiben bewusst
+// bei der bestehenden App-Palette (Gold/Dunkel/Petrol aus constants/theme.ts),
+// damit das Titelbild zur restlichen App passt statt einen fremden Blauton
+// zu übernehmen.
 function buildBackgroundSvg(width: number, height: number): string {
+  const accentSize = width * 0.5;
+  const accentCx = width * 0.87;
+  const accentCy = height * 0.13;
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <radialGradient id="bg" cx="50%" cy="42%" r="75%">
-        <stop offset="0%" stop-color="#f5f1e8"/>
-        <stop offset="100%" stop-color="#dcd5c4"/>
-      </radialGradient>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#F8F6F1"/>
+        <stop offset="100%" stop-color="#E5E1D6"/>
+      </linearGradient>
     </defs>
     <rect width="${width}" height="${height}" fill="url(#bg)"/>
+    <g transform="rotate(12 ${accentCx} ${accentCy})">
+      <rect x="${accentCx - accentSize / 2}" y="${accentCy - accentSize / 2}" width="${accentSize}" height="${accentSize}" fill="#D4A017" opacity="0.07"/>
+      <rect x="${accentCx - accentSize / 2}" y="${accentCy - accentSize / 2}" width="${accentSize}" height="${accentSize}" fill="none" stroke="#D4A017" stroke-width="2" opacity="0.22"/>
+    </g>
+    <rect x="14" y="14" width="${width - 28}" height="${height - 28}" fill="none" stroke="#1C1B19" stroke-width="1.5" opacity="0.14"/>
+  </svg>`;
+}
+
+// Preis als eigenständiges Badge (statt reiner Text auf Verlauf) - deutlich
+// "gestalteter" Eindruck, orientiert an Preis-Ecketiketten professioneller
+// Verkaufsvorlagen. Positioniert oben links, damit es sich nicht mit dem
+// unteren Titel-Balken überschneidet.
+function buildPriceBadgeSvg(priceChf: number): string {
+  const priceText = escapeSvgText(`CHF ${Math.round(priceChf)}`);
+  // Grobe Breitenschätzung je Zeichen bei Schriftgrösse 36/Bold - keine exakte
+  // Textmessung möglich (dafür bräuchte es eine Canvas-Bibliothek), grosszügig
+  // geschätzt, damit der Text nie am Badge-Rand abgeschnitten wirkt.
+  const badgeWidth = 64 + priceText.length * 24;
+  const badgeHeight = 76;
+  const margin = 36;
+  return `<svg width="${badgeWidth + margin * 2}" height="${badgeHeight + margin * 2}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.28"/>
+      </filter>
+    </defs>
+    <rect x="${margin}" y="${margin}" width="${badgeWidth}" height="${badgeHeight}" rx="10" fill="#D4A017" filter="url(#shadow)"/>
+    <text x="${margin + badgeWidth / 2}" y="${margin + badgeHeight / 2 + 13}" font-family="Arial, sans-serif" font-size="36" font-weight="800" letter-spacing="0.3" fill="#1C1B19" text-anchor="middle">${priceText}</text>
   </svg>`;
 }
 
@@ -176,27 +214,29 @@ function truncateForBanner(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
-// Halbtransparenter Verlaufsbalken am unteren Bildrand mit Titel/Preis/
-// Zustand als Text – bewusst KEIN Ersatz für das Foto, sondern eine Ergänzung
-// darauf. Zeichenlimits sind grobe Schätzwerte für die gewählte Schriftgrösse/
-// -breite, keine exakte Textmessung (dafür bräuchte es eine Canvas-Bibliothek).
+// Durchgehender dunkler Balken statt eines auslaufenden Verlaufs - wirkt
+// wie eine bewusst gestaltete Titelzeile statt eines nachträglich
+// aufgelegten Textes. Dünne Gold-Trennlinie oben als Markenelement. Preis
+// steht jetzt im eigenen Badge (buildPriceBadgeSvg), hier nur noch Titel +
+// Zustand als dezentes Tag. Zeichenlimits sind grobe Schätzwerte für die
+// gewählte Schriftgrösse/-breite, keine exakte Textmessung (dafür bräuchte
+// es eine Canvas-Bibliothek).
 function buildFactsBannerSvg(width: number, height: number, facts: MarketingFacts): string {
-  const title = escapeSvgText(truncateForBanner(facts.title, 40));
-  const price = escapeSvgText(`ab CHF ${Math.round(facts.priceChf)}`);
-  const condition = facts.conditionGuess ? escapeSvgText(truncateForBanner(facts.conditionGuess, 26)) : null;
+  const title = escapeSvgText(truncateForBanner(facts.title, 42));
+  const condition = facts.conditionGuess ? escapeSvgText(truncateForBanner(facts.conditionGuess, 28)) : null;
+  const conditionLabel = condition?.toUpperCase() ?? "";
+  const tagWidth = 56 + conditionLabel.length * 12.5;
 
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="banner" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
-        <stop offset="40%" stop-color="#000000" stop-opacity="0.7"/>
-        <stop offset="100%" stop-color="#000000" stop-opacity="0.82"/>
-      </linearGradient>
-    </defs>
-    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#banner)"/>
-    <text x="48" y="${height - 140}" font-family="Arial, sans-serif" font-size="44" font-weight="700" fill="#F5F1E8">${title}</text>
-    <text x="48" y="${height - 66}" font-family="Arial, sans-serif" font-size="52" font-weight="700" fill="#D4A017">${price}</text>
-    ${condition ? `<text x="${width - 48}" y="${height - 66}" font-family="Arial, sans-serif" font-size="30" font-weight="600" fill="#F5F1E8" text-anchor="end">${condition}</text>` : ""}
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#1C1B19"/>
+    <rect x="0" y="0" width="${width}" height="3" fill="#D4A017"/>
+    <text x="44" y="${Math.round(height * 0.46)}" font-family="Arial, sans-serif" font-size="38" font-weight="700" fill="#F5F1E8">${title}</text>
+    ${
+      condition
+        ? `<rect x="44" y="${Math.round(height * 0.6)}" width="${tagWidth}" height="36" rx="18" fill="none" stroke="#4A7A6D" stroke-width="1.5"/>
+    <text x="${44 + tagWidth / 2}" y="${Math.round(height * 0.6) + 24}" font-family="Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="0.8" fill="#4A7A6D" text-anchor="middle">${conditionLabel}</text>`
+        : ""
+    }
   </svg>`;
 }
 
@@ -284,9 +324,14 @@ export async function composeMarketingHeroImage(
 ): Promise<Buffer> {
   const overlays = await buildComposedOverlays(sourcePhotoBuffer, boundingBox, apiKey);
   const banner = Buffer.from(buildFactsBannerSvg(CANVAS_WIDTH, BANNER_HEIGHT, facts));
+  const priceBadge = Buffer.from(buildPriceBadgeSvg(facts.priceChf));
 
   return sharp(Buffer.from(buildBackgroundSvg(CANVAS_WIDTH, CANVAS_HEIGHT)))
-    .composite([...overlays, { input: banner, left: 0, top: CANVAS_HEIGHT - BANNER_HEIGHT }])
+    .composite([
+      ...overlays,
+      { input: banner, left: 0, top: CANVAS_HEIGHT - BANNER_HEIGHT },
+      { input: priceBadge, left: 0, top: 0 },
+    ])
     .jpeg({ quality: 90 })
     .toBuffer();
 }
